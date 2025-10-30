@@ -35,3 +35,22 @@ export interface AnalysisResult {
     average_confidence: number;
   };
 }
+
+export interface AnalysisProgressType {
+  totalIssues: number;
+  analyzedIssues: number;
+  currentStage: 'fetching' | 'summarizing' | 'analyzing' | 'complete';
+  issues: {
+    [issueNumber: number]: {
+      title: string;
+      status: 'pending' | 'summarizing' | 'analyzing' | 'complete' | 'error';
+      currentStage?: string;
+      progress: number; // 0-100
+      model?: string;
+      summaryTokens?: number;
+      estimatedTimeRemaining?: string;
+    }
+  };
+  estimatedTotalTime: number;
+  startTime: number;
+}

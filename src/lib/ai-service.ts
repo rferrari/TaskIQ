@@ -1,5 +1,15 @@
 import { OpenAI } from 'openai';
 import { GitHubIssue } from '@/types';
+import { 
+  config, 
+  getModelConfig, 
+  estimateAnalysisCost, 
+  getCostRange,
+  getOpenAIConfig, 
+  validateEnvironment, 
+  getSummarizationSystemPrompt, 
+  getAnalysisSystemPrompt 
+} from '@/config';
 
 interface AIModelResponse {
   complexity: number;
@@ -12,19 +22,22 @@ interface AIModelResponse {
   ai_analysis: string;
 }
 
-// Initialize OpenAI client
+// Initialize OpenAI client with validated config
+const openAIConfig = getOpenAIConfig();
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-  baseURL: process.env.OPENAI_BASE_URL,
+  apiKey: openAIConfig.apiKey,
+  baseURL: openAIConfig.baseURL,
 });
 
-/** Collects all fallback models defined in .env */
-const availableModels = Object.entries(process.env)
-  .filter(([key]) => key.startsWith('OPENAI_LLM_MODEL'))
-  .map(([_, value]) => value!)
-  .filter(Boolean);
+// Validate environment at startup
+const envValidation = validateEnvironment();
+if (envValidation.warnings.length > 0) {
+  console.warn('⚠️ Environment warnings:', envValidation.warnings);
+}
 
-console.log('🤖 Available LLM Models:', availableModels);
+console.log('🤖 AI Service Initialized with Multi-Stage Pipeline');
+console.log(`   Strategy: Small → Regular → Large with Summarization`);
+console.log(`   Cost Optimization: ${config.features.enableCostOptimization ? 'Enabled' : 'Disabled'}`);
 
 /** --- UTILITIES --- **/
 
@@ -37,7 +50,7 @@ function parseAIResponse(raw: string): any {
     .replace(/^json\s*/i, '')
     .trim();
 
-  console.log(`🔄 Cleaned response: ${cleaned.substring(0, 200)}...`);
+  console.log(`🔄 Cleaned response preview: ${cleaned.substring(0, 200)}...`);
 
   try { 
     const result = JSON.parse(cleaned);
@@ -55,13 +68,14 @@ function parseAIResponse(raw: string): any {
       return result;
     } catch (secondError: any) {
       console.error(`❌ JSON extraction failed:`, secondError.message);
+      console.error(`❌ Failed content:`, jsonMatch[0].substring(0, 500));
     }
   }
 
   throw new Error('Failed to parse AI response: No valid JSON found');
 }
 
-function getFallbackAnalysis(issue: GitHubIssue): AIModelResponse {
+export function getFallbackAnalysis(issue: GitHubIssue): AIModelResponse {
   // Simple fallback analysis when all AI models fail
   const title = issue.title.toLowerCase();
   const body = issue.body?.toLowerCase() || '';
@@ -98,17 +112,9 @@ function getFallbackAnalysis(issue: GitHubIssue): AIModelResponse {
   
   complexity = Math.min(Math.max(complexity, 1), 5);
 
-  const costRanges = {
-    1: '$100-$250',
-    2: '$250-$500',
-    3: '$500-$750', 
-    4: '$750-$1000',
-    5: '$1000-$1500'
-  };
-
   return {
     complexity,
-    estimated_cost: costRanges[complexity as keyof typeof costRanges],
+    estimated_cost: getCostRange(complexity),
     category,
     confidence,
     key_factors: ['Fallback analysis', 'Basic heuristics'],
@@ -118,109 +124,7 @@ function getFallbackAnalysis(issue: GitHubIssue): AIModelResponse {
   };
 }
 
-/** --- AI ANALYSIS LOGIC --- **/
-
-async function tryAnalyzeWithModel(model: string, issue: GitHubIssue): Promise<AIModelResponse> {
-  const prompt = createAnalysisPrompt(issue);
-  
-  try {
-    console.log(`\n📝 PROMPT for issue #${issue.number}:`);
-    console.log('--- Prompt Start ---');
-    console.log(prompt.substring(0, 500) + '...'); // Show first 500 chars
-    console.log('--- Prompt End ---\n');
-    
-    const completion = await openai.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert software engineer and project estimator. Always respond with valid JSON. Be realistic in your assessments."
-        },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.1,
-      max_tokens: 1500,
-      response_format: { type: "json_object" } // Force JSON mode if available
-    });
-
-    const response = completion.choices[0]?.message?.content;
-    if (!response) throw new Error('No response from AI');
-
-    console.log(`\n🤖 RAW LLM RESPONSE for issue #${issue.number}:`);
-    console.log('--- Response Start ---');
-    console.log(response);
-    console.log('--- Response End ---\n');
-
-    // Parse and validate
-    const parsed = parseAIResponse(response);
-    console.log(`✅ PARSED JSON for issue #${issue.number}:`);
-    console.log(JSON.stringify(parsed, null, 2));
-    
-    const validated = validateAIResponse(parsed);
-    console.log(`✅ VALIDATED ANALYSIS for issue #${issue.number}:`);
-    console.log(JSON.stringify(validated, null, 2));
-    
-    return validated;
-  } catch (error: any) {
-    console.error(`❌ AI model ${model} failed for issue #${issue.number}:`, error.message);
-    if (error.response) {
-      console.error('Error details:', error.response.data);
-    }
-    throw error;
-  }
-}
-
-function createAnalysisPrompt(issue: GitHubIssue): string {
-  return `
-Analyze this GitHub issue and estimate development complexity and cost.
-
-ISSUE #${issue.number}: ${issue.title}
-DESCRIPTION: ${issue.body?.substring(0, 1500) || 'No description provided'}
-LABELS: ${issue.labels.map(l => l.name).join(', ')}
-COMMENTS: ${issue.comments}
-CREATED: ${issue.created_at}
-
-Please analyze this issue and provide your assessment in JSON format:
-
-{
-  "complexity": 1-5,
-  "estimated_cost": "$XXX-XXX",
-  "category": "bug|feature|documentation|enhancement|refactor",
-  "confidence": 0.1-1.0,
-  "key_factors": ["factor1", "factor2", "factor3"],
-  "potential_risks": ["risk1", "risk2"],
-  "recommended_actions": ["action1", "action2"],
-  "ai_analysis": "Brief reasoning for the assessment"
-}
-
-Complexity Scale:
-1: Trivial (1-2 hours) - Simple bugs, documentation updates
-2: Simple (2-8 hours) - Minor features, CSS changes, small enhancements
-3: Moderate (1-3 days) - Multi-component features, moderate refactoring
-4: Complex (3-10 days) - Complex features, API integrations, major refactoring
-5: Very Complex (2+ weeks) - Major features, architectural changes, complex integrations
-
-Cost Ranges (adjust based on complexity):
-1: $100-$250
-2: $250-$500
-3: $500-$750
-4: $750-$1000
-5: $1000-$1500
-
-Be realistic in your assessment. Consider:
-- Issue description clarity and detail
-- Labels and their meanings
-- Number of comments (indicates discussion complexity)
-- Potential technical challenges
-- Testing requirements
-- Documentation needs
-
-Respond with valid JSON only:
-`;
-}
-
 function validateAIResponse(parsed: any): AIModelResponse {
-  // Validate required fields
   const required = ['complexity', 'estimated_cost', 'category', 'confidence'];
   for (const field of required) {
     if (!(field in parsed)) {
@@ -240,51 +144,6 @@ function validateAIResponse(parsed: any): AIModelResponse {
   };
 }
 
-/** --- PUBLIC API --- **/
-
-export async function analyzeIssueWithAI(
-  issue: GitHubIssue
-): Promise<AIModelResponse> {
-
-  // If no models are configured, use fallback immediately
-  if (availableModels.length === 0) {
-    console.warn('⚠️ No AI models configured, using fallback analysis');
-    return getFallbackAnalysis(issue);
-  }
-
-  console.log(`\n🎯 STARTING ANALYSIS for issue #${issue.number}: "${issue.title}"`);
-  console.log(`🏷️ Labels: ${issue.labels.map(l => l.name).join(', ')}`);
-  console.log(`💬 Comments: ${issue.comments}`);
-  console.log(`📝 Body length: ${issue.body?.length || 0} chars\n`);
-
-  // Iterate over models sequentially
-  for (const model of availableModels) {
-    try {
-      console.log(`🧠 Attempting model: ${model}`);
-      const analysis = await tryAnalyzeWithModel(model, issue);
-      console.log(`🎉 SUCCESS with model: ${model} for issue #${issue.number}`);
-      return analysis;
-    } catch (error: any) {
-      console.error(`💥 Model ${model} failed for issue #${issue.number}: ${error.message}`);
-      
-      // Handle rate limit separately
-      if (error.status === 429) {
-        console.warn(`⏳ Rate limit on ${model}, trying next...`);
-        continue;
-      }
-      
-      // For other errors, wait a bit and try next model
-      await new Promise(resolve => setTimeout(resolve, 500));
-      continue;
-    }
-  }
-
-  // If all models failed
-  console.error(`🔴 ALL MODELS FAILED for issue #${issue.number}, using fallback`);
-  return getFallbackAnalysis(issue);
-}
-
-// For development/testing without API keys
 // For development/testing without API keys
 export function mockAnalyzeIssue(issue: GitHubIssue): AIModelResponse {
   console.log(`🤖 USING MOCK ANALYSIS for issue #${issue.number}`);
@@ -299,4 +158,206 @@ export function mockAnalyzeIssue(issue: GitHubIssue): AIModelResponse {
   console.log(JSON.stringify(analysis, null, 2));
   
   return analysis;
+}
+
+/** --- TOKEN ESTIMATION & STRATEGY --- **/
+
+// Rough token estimation (4 chars ≈ 1 token for English text)
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+export function selectAnalysisStrategy(issue: GitHubIssue): {
+  model: string;
+  needsSummarization: boolean;
+  estimatedCost: number;
+  modelConfig: any;
+} {
+  const issueContent = `${issue.title} ${issue.body || ''}`;
+  const totalTokens = estimateTokens(issueContent);
+  
+  const smallModel = getModelConfig('small');
+  const regularModel = getModelConfig('regular');
+  const largeModel = getModelConfig('large');
+
+  // Check if issue is too large to process
+  if (totalTokens > config.ai.maxIssueTokens) {
+    console.warn(`⚠️ Issue #${issue.number} exceeds maximum token limit (${totalTokens} > ${config.ai.maxIssueTokens})`);
+    // Fall back to small model with forced summarization
+    return {
+      model: smallModel.id,
+      needsSummarization: true,
+      estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
+      modelConfig: smallModel
+    };
+  }
+
+  // If it fits in small model with room for analysis, use it
+  if (totalTokens < smallModel.maxContext * 0.7) {
+    return {
+      model: smallModel.id,
+      needsSummarization: false,
+      estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
+      modelConfig: smallModel
+    };
+  }
+
+  // If it fits in regular model with room for analysis, use it
+  if (totalTokens < regularModel.maxContext * 0.7) {
+    return {
+      model: regularModel.id,
+      needsSummarization: false,
+      estimatedCost: estimateAnalysisCost(totalTokens, regularModel),
+      modelConfig: regularModel
+    };
+  }
+
+  // Large issues need summarization first with large model
+  return {
+    model: largeModel.id,
+    needsSummarization: true,
+    estimatedCost: estimateAnalysisCost(totalTokens, largeModel),
+    modelConfig: largeModel
+  };
+}
+
+/** --- STAGE 1: SUMMARIZATION --- **/
+
+export async function createIssueSummary(issue: GitHubIssue): Promise<string> {
+  console.log(`📝 Stage 1: Creating summary for issue #${issue.number}`);
+  
+  const issueContent = `
+ISSUE #${issue.number}: ${issue.title}
+LABELS: ${issue.labels.map(l => l.name).join(', ') || 'None'}
+COMMENTS: ${issue.comments}
+DESCRIPTION: ${issue.body || 'No description provided'}
+  `.trim();
+
+  const currentTokens = estimateTokens(issueContent);
+  const targetTokens = config.ai.summaryTargetTokens;
+  
+  if (currentTokens <= targetTokens) {
+    console.log(`✅ Issue #${issue.number} already fits target (${currentTokens} tokens)`);
+    return issueContent;
+  }
+
+  console.log(`🔄 Summarizing issue #${issue.number} from ${currentTokens} to ~${targetTokens} tokens`);
+
+  // Much simpler user prompt - system prompt contains all instructions
+  const userPrompt = `Please summarize this GitHub issue for cost estimation:\n\n${issueContent}`;
+
+  try {
+    const smallModel = getModelConfig('small');
+    const completion = await openai.chat.completions.create({
+      model: smallModel.id,
+      messages: [
+        {
+          role: "system",
+          content: getSummarizationSystemPrompt()
+        },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: targetTokens,
+    });
+
+    const summary = completion.choices[0]?.message?.content?.trim();
+    if (!summary) throw new Error('No summary generated');
+
+    const summaryTokens = estimateTokens(summary);
+    console.log(`✅ Summary created: ${summaryTokens} tokens`);
+    console.log(`📋 Summary preview: ${summary.substring(0, 200)}...`);
+
+    return summary;
+  } catch (error) {
+    console.error(`❌ Summarization failed for issue #${issue.number}:`, error);
+    // Fallback: truncate the original content
+    return issueContent.substring(0, config.ai.summaryTargetTokens * 4) + '...';
+  }
+}
+
+/** --- STAGE 2: ANALYSIS --- **/
+
+export async function analyzeWithModel(model: string, issue: GitHubIssue, summary: string): Promise<AIModelResponse> {
+  console.log(`🔍 Stage 2: Analyzing with ${model}`);
+
+  // Simple user prompt - system prompt contains all analysis parameters
+  const userPrompt = `Please analyze this GitHub issue summary and provide a cost estimation:\n\n${summary}`;
+
+  try {
+    const startTime = Date.now();
+    const completion = await openai.chat.completions.create({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: getAnalysisSystemPrompt() // Now dynamically includes current cost ranges
+        },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: config.ai.analysisMaxTokens,
+      response_format: { type: "json_object" }
+    });
+    const endTime = Date.now();
+
+    console.log(`⏱️ Analysis with ${model} took: ${endTime - startTime}ms`);
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) throw new Error('No analysis response');
+
+    console.log(`🤖 ${model} analysis response:`, response);
+
+    return validateAIResponse(JSON.parse(response));
+  } catch (error: any) {
+    console.error(`❌ Analysis failed with ${model}:`, error.message);
+    throw error;
+  }
+}
+
+/** --- MAIN PIPELINE --- **/
+
+export async function analyzeIssueWithAI(
+  issue: GitHubIssue
+): Promise<AIModelResponse> {
+  
+  console.log(`\n🎯 STARTING ANALYSIS PIPELINE for issue #${issue.number}`);
+  console.log(`📊 Issue: "${issue.title}"`);
+  console.log(`🏷️ Labels: ${issue.labels.map(l => l.name).join(', ')}`);
+  console.log(`💬 Comments: ${issue.comments}`);
+  console.log(`📝 Body length: ${issue.body?.length || 0} chars`);
+    
+  // Stage 0: Strategy Selection
+  const strategy = selectAnalysisStrategy(issue);
+  console.log(`⚡ Selected strategy:`, {
+    model: strategy.model,
+    needsSummarization: strategy.needsSummarization,
+    estimatedCost: `$${strategy.estimatedCost.toFixed(6)}`,
+    reason: strategy.needsSummarization ? 'Large issue requiring summarization' : 'Fits directly in selected model'
+  });
+
+  try {
+    // Stage 1: Summarization (if needed)
+    const analysisContent = strategy.needsSummarization 
+      ? await createIssueSummary(issue)
+      : `
+ISSUE #${issue.number}: ${issue.title}
+LABELS: ${issue.labels.map(l => l.name).join(', ') || 'None'} 
+COMMENTS: ${issue.comments}
+DESCRIPTION: ${issue.body || 'No description provided'}
+      `.trim();
+
+    // Stage 2: Analysis with selected model
+    console.log(`🔍 Beginning analysis with ${strategy.model}...`);
+    const analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+
+    console.log(`🎉 ANALYSIS COMPLETE for issue #${issue.number}`);
+    console.log(`📈 Result: Complexity ${analysis.complexity}, Cost: ${analysis.estimated_cost}, Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
+
+    return analysis;
+    
+  } catch (error) {
+    console.error(`🔴 PIPELINE FAILED for issue #${issue.number}, using fallback`);
+    return getFallbackAnalysis(issue);
+  }
 }
