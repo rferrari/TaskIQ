@@ -15,12 +15,10 @@ export function IssuesTable({ issues }: IssuesTableProps) {
   const sortedAndFilteredIssues = useMemo(() => {
     let filtered = issues;
     
-    // Filter by complexity
     if (filterComplexity !== 'all') {
       filtered = filtered.filter(issue => issue.complexity === parseInt(filterComplexity));
     }
     
-    // Sort issues
     return [...filtered].sort((a, b) => {
       if (sortField === 'complexity') {
         return b.complexity - a.complexity;
@@ -44,40 +42,46 @@ export function IssuesTable({ issues }: IssuesTableProps) {
 
   const getComplexityColor = (complexity: number) => {
     const colors = {
-      1: 'bg-green-100 text-green-800',
-      2: 'bg-blue-100 text-blue-800',
-      3: 'bg-yellow-100 text-yellow-800',
-      4: 'bg-orange-100 text-orange-800',
-      5: 'bg-red-100 text-red-800'
+      1: 'bg-green-500/20 text-green-300 border border-green-500/30',
+      2: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+      3: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30',
+      4: 'bg-orange-500/20 text-orange-300 border border-orange-500/30',
+      5: 'bg-red-500/20 text-red-300 border border-red-500/30'
     };
-    return colors[complexity as keyof typeof colors] || 'bg-gray-100 text-gray-800';
+    return colors[complexity as keyof typeof colors] || 'bg-gray-500/20 text-gray-300 border border-gray-500/30';
   };
 
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
-      bug: 'bg-red-100 text-red-800',
-      feature: 'bg-green-100 text-green-800',
-      enhancement: 'bg-blue-100 text-blue-800',
-      documentation: 'bg-gray-100 text-gray-800',
-      refactor: 'bg-purple-100 text-purple-800'
+      bug: 'bg-red-500/20 text-red-300 border border-red-500/30',
+      feature: 'bg-green-500/20 text-green-300 border border-green-500/30',
+      enhancement: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+      documentation: 'bg-gray-500/20 text-gray-300 border border-gray-500/30',
+      refactor: 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
     };
-    return colors[category] || 'bg-gray-100 text-gray-800';
+    return colors[category] || 'bg-gray-500/20 text-gray-300 border border-gray-500/30';
+  };
+
+  // Truncate long text
+  const truncateText = (text: string, maxLength: number) => {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+    <div className="glass-card rounded-2xl border border-gray-800">
       {/* Table Controls */}
-      <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-        <div className="flex gap-4 flex-wrap">
-          <div>
-            <label htmlFor="sort" className="block text-sm font-medium text-gray-700 mb-1">
+      <div className="p-4 border-b border-gray-800 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
+        <div className="flex gap-3 flex-wrap">
+          <div className="min-w-[140px]">
+            <label htmlFor="sort" className="block text-xs font-medium text-gray-300 mb-1">
               Sort by
             </label>
             <select
               id="sort"
               value={sortField}
               onChange={(e) => setSortField(e.target.value as any)}
-              className="block w-full rounded-md border border-gray-300 bg-white py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-1.5 px-2 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-xs"
             >
               <option value="complexity">Complexity</option>
               <option value="estimated_cost">Cost</option>
@@ -85,15 +89,15 @@ export function IssuesTable({ issues }: IssuesTableProps) {
             </select>
           </div>
           
-          <div>
-            <label htmlFor="filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Filter by complexity
+          <div className="min-w-[140px]">
+            <label htmlFor="filter" className="block text-xs font-medium text-gray-300 mb-1">
+              Filter complexity
             </label>
             <select
               id="filter"
               value={filterComplexity}
               onChange={(e) => setFilterComplexity(e.target.value)}
-              className="block w-full rounded-md border border-gray-300 bg-white py-2 px-3 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
+              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-1.5 px-2 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-xs"
             >
               <option value="all">All</option>
               <option value="1">1 - Trivial</option>
@@ -107,100 +111,114 @@ export function IssuesTable({ issues }: IssuesTableProps) {
 
         <button
           onClick={handleExportCSV}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm font-medium"
+          className="btn-primary px-3 py-1.5 rounded-lg text-xs font-medium mt-1 sm:mt-0"
         >
           Export CSV
         </button>
       </div>
 
-      {/* Issues Table */}
+      {/* Compact Table */}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-900/50">
             <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th scope="col" className="py-2 pl-3 pr-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8/12">
                 Issue
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Complexity
+              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-1/12">
+                Level
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Estimated Cost
+              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+                Cost
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Category
+              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+                Type
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Confidence
-              </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Labels
+              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+                Conf
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-800">
             {sortedAndFilteredIssues.map((issue) => (
-              <tr key={issue.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex flex-col">
+              <tr key={issue.id} className="hover:bg-gray-800/30 transition-colors">
+                {/* Issue Column - Now much more compact */}
+                <td className="py-2 pl-3 pr-2">
+                  <div className="flex flex-col space-y-1">
                     <a
                       href={issue.html_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm font-medium text-blue-600 hover:text-blue-900"
+                      className="text-xs font-medium text-blue-400 hover:text-blue-300 leading-tight"
+                      title={`#${issue.number} ${issue.title}`}
                     >
-                      #{issue.number} {issue.title}
+                      <span className="text-gray-500">#{issue.number}</span>{' '}
+                      {truncateText(issue.title, 60)}
                     </a>
-                    <p className="text-sm text-gray-500 truncate max-w-xs">
-                      {issue.ai_analysis}
-                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {issue.labels.slice(0, 2).map((label) => (
+                        <span
+                          key={label.name}
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border"
+                          style={{ 
+                            backgroundColor: `#${label.color}15`,
+                            color: `#${label.color}`,
+                            borderColor: `#${label.color}30`
+                          }}
+                          title={label.name}
+                        >
+                          {truncateText(label.name, 12)}
+                        </span>
+                      ))}
+                      {issue.labels.length > 2 && (
+                        <span 
+                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-300 border border-gray-600"
+                          title={`+${issue.labels.length - 2} more labels`}
+                        >
+                          +{issue.labels.length - 2}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getComplexityColor(issue.complexity)}`}>
+                
+                {/* Complexity Level */}
+                <td className="py-2 px-2">
+                  <span 
+                    className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${getComplexityColor(issue.complexity)}`}
+                    title={`Complexity level ${issue.complexity}`}
+                  >
                     {issue.complexity}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                
+                {/* Estimated Cost */}
+                <td className="py-2 px-2 text-xs font-medium text-white">
                   {issue.estimated_cost}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${getCategoryColor(issue.category)}`}>
-                    {issue.category}
+                
+                {/* Category Type */}
+                <td className="py-2 px-2">
+                  <span 
+                    className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium capitalize ${getCategoryColor(issue.category)}`}
+                    title={issue.category}
+                  >
+                    {truncateText(issue.category, 8)}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="w-16 bg-gray-200 rounded-full h-2">
+                
+                {/* Confidence */}
+                <td className="py-2 px-2">
+                  <div className="flex items-center space-x-1" title={`${(issue.confidence * 100).toFixed(0)}% confidence`}>
+                    <div className="w-10 bg-gray-700 rounded-full h-1.5">
                       <div 
-                        className="bg-green-600 h-2 rounded-full" 
+                        className="bg-green-500 h-1.5 rounded-full" 
                         style={{ width: `${issue.confidence * 100}%` }}
                       ></div>
                     </div>
-                    <span className="ml-2 text-sm text-gray-600">
+                    <span className="text-xs text-gray-300 min-w-8">
                       {(issue.confidence * 100).toFixed(0)}%
                     </span>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex flex-wrap gap-1">
-                    {issue.labels.slice(0, 3).map((label) => (
-                      <span
-                        key={label.name}
-                        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"
-                        style={{ 
-                          backgroundColor: `#${label.color}20`,
-                          color: `#${label.color}`
-                        }}
-                      >
-                        {label.name}
-                      </span>
-                    ))}
-                    {issue.labels.length > 3 && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
-                        +{issue.labels.length - 3}
-                      </span>
-                    )}
                   </div>
                 </td>
               </tr>
@@ -210,8 +228,8 @@ export function IssuesTable({ issues }: IssuesTableProps) {
       </div>
 
       {/* Table Footer */}
-      <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
-        <p className="text-sm text-gray-600">
+      <div className="px-4 py-3 border-t border-gray-800 bg-gray-900/30">
+        <p className="text-xs text-gray-400">
           Showing {sortedAndFilteredIssues.length} of {issues.length} issues
         </p>
       </div>

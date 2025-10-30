@@ -46,8 +46,8 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 py-8">
+  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {!analysisResult && (
           <div className="max-w-2xl mx-auto">
             <RepositoryForm onAnalyze={handleAnalyze} isLoading={isLoading} />
@@ -55,19 +55,19 @@ export default function Home() {
         )}
 
         {isLoading && (
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8">
-              <LoadingSpinner />
-              <p className="text-center text-gray-600 mt-4">
-                Analyzing repository issues... This may take a minute.
-              </p>
-            </div>
-          </div>
-        )}
+  <div className="max-w-4xl mx-auto">
+    <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-lg p-8">
+      <LoadingSpinner />
+      <p className="text-center text-gray-600 dark:text-gray-400 mt-4">
+        Analyzing repository issues... This may take a minute.
+      </p>
+    </div>
+  </div>
+)}
 
         {error && (
-          <div className="max-w-2xl mx-auto">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+  <div className="max-w-2xl mx-auto">
+    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-6">
               <div className="flex">
                 <div className="flex-shrink-0">
                   <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
