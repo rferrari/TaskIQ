@@ -1,13 +1,20 @@
+// lib/csv-generator.ts
 import { AnalyzedIssue } from '@/types';
 
-export function generateCSV(issues: AnalyzedIssue[]): string {
+export function generateCSV(
+  issues: AnalyzedIssue[],
+  options?: { includeReasoning?: boolean }
+): string {
+  const { includeReasoning = false } = options || {};
+
   const headers = [
     'issue_number',
     'title',
     'complexity', 
     'estimated_cost',
     'labels',
-    'url'
+    'url',
+    ...(includeReasoning ? ['ai_analysis', 'key_factors', 'potential_risks', 'recommended_actions'] : [])
   ];
 
   const rows = issues.map(issue => [
@@ -16,7 +23,15 @@ export function generateCSV(issues: AnalyzedIssue[]): string {
     issue.complexity,
     `"${issue.estimated_cost}"`,
     `"${issue.labels.map(l => l.name).join(', ')}"`,
-    issue.html_url
+    issue.html_url,
+    ...(includeReasoning
+      ? [
+          `"${escapeCSV(issue.ai_analysis || '')}"`,
+          `"${escapeCSV(issue.key_factors?.join('; ') || '')}"`,
+          `"${escapeCSV(issue.potential_risks?.join('; ') || '')}"`,
+          `"${escapeCSV(issue.recommended_actions?.join('; ') || '')}"`
+        ]
+      : [])
   ]);
 
   return [headers, ...rows].map(row => row.join(',')).join('\n');
