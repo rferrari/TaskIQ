@@ -223,6 +223,7 @@ export function selectAnalysisStrategy(issue: GitHubIssue): {
 
 /** --- STAGE 1: SUMMARIZATION --- **/
 
+// Enhanced createIssueSummary function with built-in trimming
 export async function createIssueSummary(issue: GitHubIssue): Promise<string> {
   console.log(`📝 Stage 1: Creating summary for issue #${issue.number}`);
   
@@ -230,21 +231,26 @@ export async function createIssueSummary(issue: GitHubIssue): Promise<string> {
 ISSUE #${issue.number}: ${issue.title}
 LABELS: ${issue.labels.map(l => l.name).join(', ') || 'None'}
 COMMENTS: ${issue.comments}
+STATE: ${issue.state}
+CREATED: ${issue.created_at}
 DESCRIPTION: ${issue.body || 'No description provided'}
   `.trim();
 
   const currentTokens = estimateTokens(issueContent);
   const targetTokens = config.ai.summaryTargetTokens;
   
+  // If content is already within limits, use as-is
   if (currentTokens <= targetTokens) {
-    console.log(`✅ Issue #${issue.number} already fits target (${currentTokens} tokens)`);
+    console.log(`✅ Issue #${issue.number} fits target (${currentTokens} tokens)`);
     return issueContent;
   }
 
   console.log(`🔄 Summarizing issue #${issue.number} from ${currentTokens} to ~${targetTokens} tokens`);
 
-  // Much simpler user prompt - system prompt contains all instructions
-  const userPrompt = `Please summarize this GitHub issue for cost estimation:\n\n${issueContent}`;
+  // Apply smart trimming before sending to AI
+  const trimmedContent = smartTrimIssueContent(issueContent, targetTokens * 3); // Convert to chars
+  
+  const userPrompt = `Please create a concise technical summary of this GitHub issue for cost estimation analysis:\n\n${trimmedContent}`;
 
   try {
     const smallModel = getModelConfig('small');
@@ -266,14 +272,97 @@ DESCRIPTION: ${issue.body || 'No description provided'}
 
     const summaryTokens = estimateTokens(summary);
     console.log(`✅ Summary created: ${summaryTokens} tokens`);
-    console.log(`📋 Summary preview: ${summary.substring(0, 200)}...`);
-
+    
     return summary;
   } catch (error) {
     console.error(`❌ Summarization failed for issue #${issue.number}:`, error);
-    // Fallback: truncate the original content
-    return issueContent.substring(0, config.ai.summaryTargetTokens * 4) + '...';
+    // Fallback: return the smart-trimmed content
+    return trimmedContent;
   }
+}
+
+// Smart trimming function that combines noise removal and key extraction
+function smartTrimIssueContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+
+  console.log(`✂️ Trimming content from ${content.length} to ${maxChars} chars`);
+
+  // Step 1: Remove common noise
+  let cleaned = removeCommonNoise(content);
+  
+  // Step 2: If still too long, extract key sections
+  if (cleaned.length > maxChars) {
+    cleaned = extractKeySections(cleaned, maxChars);
+  }
+  
+  // Step 3: Final truncation if needed
+  if (cleaned.length > maxChars) {
+    cleaned = cleaned.substring(0, maxChars - 100) + '\n\n...[Content truncated due to length]';
+  }
+  
+  console.log(`✅ Trimmed to ${cleaned.length} chars`);
+  return cleaned;
+}
+
+// Remove common noise patterns (logs, stack traces, etc.)
+function removeCommonNoise(text: string): string {
+  return text
+    // Remove code blocks with logs
+    .replace(/```[\s\S]*?```/g, ' [Code/logs removed] ')
+    // Remove stack traces
+    .replace(/\s+at\s+[^\n]+(\n\s+at\s+[^\n]+)*/g, ' [Stack trace removed] ')
+    // Remove hex strings and long hashes
+    .replace(/\b[0-9a-f]{16,}\b/gi, '[hex]')
+    // Remove very long strings without spaces
+    .replace(/\b\S{50,}\b/g, '[long_string]')
+    // Normalize whitespace
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// Extract the most important sections
+function extractKeySections(text: string, maxChars: number): string {
+  const sections: string[] = [];
+  let currentLength = 0;
+  
+  // Look for important markers in order of importance
+  const patterns = [
+    // Problem description (most important)
+    /(problem|issue|bug|error|what's wrong)[\s:]*\n?([^\n]{50,400})/gi,
+    // Steps to reproduce
+    /(steps? to reproduce|reproduce|reproduction)[\s:]*\n?([\s\S]{50,800})/gi,
+    // Expected vs actual behavior
+    /(expected|actual|current behavior)[\s:]*\n?([^\n]{30,300})/gi,
+    // Error messages
+    /(error|exception|fail)[\s:]*\n?([^\n]{20,200})/gi,
+    // First substantial paragraph
+    /^([^\n]{100,500})/,
+  ];
+  
+  for (const pattern of patterns) {
+    const matches = Array.from(text.matchAll(pattern));
+    for (const match of matches) {
+      const content = (match[2] || match[1] || '').trim();
+      if (content && currentLength + content.length <= maxChars * 0.9) {
+        sections.push(content);
+        currentLength += content.length;
+      }
+    }
+  }
+  
+  // If we found good sections, use them with context
+  if (sections.length > 0) {
+    return `Key issue details:\n\n${sections.slice(0, 3).join('\n\n')}`;
+  }
+  
+  // Fallback: first and last parts with context
+  const firstPart = text.substring(0, Math.floor(maxChars * 0.6));
+  const lastPart = text.substring(Math.max(0, text.length - Math.floor(maxChars * 0.3)));
+  
+  return `${firstPart}\n\n...[content omitted]...\n\n${lastPart}`;
 }
 
 /** --- STAGE 2: ANALYSIS --- **/

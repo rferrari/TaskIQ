@@ -1,18 +1,42 @@
 // src/app/api/analyze/route.ts
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const fetchCache = 'force-no-store'; // ✅ ensure no caching
-export const preferredRegion = 'auto'; // optional
+export const fetchCache = 'force-no-store';
+export const preferredRegion = 'auto';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
 import { AnalysisResult, AnalysisProgressType } from '@/types';
-import { analyzeIssueWithAI, analyzeWithModel, 
-  createIssueSummary, getFallbackAnalysis, 
-  mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
+import { analyzeWithModel, createIssueSummary, getFallbackAnalysis, mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
+import { config } from '@/config'; // Add this import
 
-// Helper function to calculate summary (moved outside main function)
+// Helper function to calculate summary
+// SSE helper functions
+async function sendProgress(writer: any, encoder: any, progress: any) {
+  writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'progress', data: progress })}\n\n`));
+}
+
+async function sendBatchStart(writer: any, encoder: any, data: any) {
+  writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'batch_start', data })}\n\n`));
+}
+
+async function sendBatchComplete(writer: any, encoder: any, data: any) {
+  writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'batch_complete', data })}\n\n`));
+}
+
+async function sendPartialResult(writer: any, encoder: any, result: any) {
+  writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'partial_result', data: result })}\n\n`));
+}
+
+async function sendComplete(writer: any, encoder: any, result: any) {
+  writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'complete', data: result })}\n\n`));
+}
+
+// cost calculation function
 function calculateSummary(issues: any[]) {
+
+  return calculateSummaryWithDebug(issues); // For debugging
+
   const complexityDistribution: Record<number, number> = {};
   const categoryBreakdown: Record<string, number> = {};
   let totalBudgetMin = 0;
@@ -22,13 +46,81 @@ function calculateSummary(issues: any[]) {
     complexityDistribution[issue.complexity] = (complexityDistribution[issue.complexity] || 0) + 1;
     categoryBreakdown[issue.category] = (categoryBreakdown[issue.category] || 0) + 1;
     
-    const costMatch = issue.estimated_cost.match(/\$(\d+)-?\$?(\d+)?/);
+    // FIXED: Proper cost parsing
+    const costMatch = issue.estimated_cost.match(/\$(\d+)(?:\s*-\s*\$\s*(\d+))?/);
     if (costMatch) {
-      totalBudgetMin += parseInt(costMatch[1]);
-      totalBudgetMax += parseInt(costMatch[2] || costMatch[1]);
+      const minCost = parseInt(costMatch[1]);
+      const maxCost = costMatch[2] ? parseInt(costMatch[2]) : minCost;
+      
+      totalBudgetMin += minCost;
+      totalBudgetMax += maxCost;
+    } else {
+      console.warn(`Could not parse cost for issue #${issue.number}: "${issue.estimated_cost}"`);
     }
   });
- 
+
+  return {
+    total_issues: issues.length,
+    total_budget_min: totalBudgetMin,
+    total_budget_max: totalBudgetMax,
+    complexity_distribution: complexityDistribution,
+    category_breakdown: categoryBreakdown,
+    average_confidence: issues.reduce((sum, issue) => sum + issue.confidence, 0) / issues.length
+  };
+}
+
+// Add debugging to see what's happening
+function calculateSummaryWithDebug(issues: any[]) {
+  const complexityDistribution: Record<number, number> = {};
+  const categoryBreakdown: Record<string, number> = {};
+  let totalBudgetMin = 0;
+  let totalBudgetMax = 0;
+
+  console.log('🔍 DEBUG: Cost calculation for issues:');
+  
+  issues.forEach(issue => {
+    complexityDistribution[issue.complexity] = (complexityDistribution[issue.complexity] || 0) + 1;
+    categoryBreakdown[issue.category] = (categoryBreakdown[issue.category] || 0) + 1;
+    
+    // Multiple cost parsing strategies
+    let minCost = 0;
+    let maxCost = 0;
+    
+    // Strategy 1: Match "$XXX-XXX" or "$XXX-$XXX"
+    let costMatch = issue.estimated_cost.match(/\$(\d+)(?:\s*-\s*\$\s*(\d+))?/);
+    
+    if (costMatch) {
+      minCost = parseInt(costMatch[1]);
+      maxCost = costMatch[2] ? parseInt(costMatch[2]) : minCost;
+    } else {
+      // Strategy 2: Match any numbers in the string
+      const numbers = issue.estimated_cost.match(/\d+/g);
+      if (numbers && numbers.length >= 2) {
+        minCost = parseInt(numbers[0]);
+        maxCost = parseInt(numbers[1]);
+      } else if (numbers && numbers.length === 1) {
+        minCost = maxCost = parseInt(numbers[0]);
+      } else {
+        // Strategy 3: Fallback based on complexity
+        if (issue.complexity >= 7) {
+          minCost = 300; maxCost = 600; // Complex
+        } else if (issue.complexity >= 4) {
+          minCost = 120; maxCost = 300; // Moderate
+        } else {
+          minCost = 50; maxCost = 120; // Simple
+        }
+        console.warn(`Using fallback cost for issue #${issue.number}: $${minCost}-$${maxCost}`);
+      }
+    }
+    
+    console.log(`Issue #${issue.number}: "${issue.estimated_cost}" -> $${minCost}-$${maxCost}`);
+    
+    totalBudgetMin += minCost;
+    totalBudgetMax += maxCost;
+  });
+
+  console.log(`💰 DEBUG: Total calculated: $${totalBudgetMin}-$${totalBudgetMax}`);
+
   return {
     total_issues: issues.length,
     total_budget_min: totalBudgetMin,
@@ -46,7 +138,7 @@ function estimateTokens(text: string): number {
 
 export async function POST(request: NextRequest) {
   try {
-    const { repoUrl, batchSize = 20, batchIndex = 0, totalBatches = 0 } = await request.json();
+    const { repoUrl, batchSize = config.ai.batchSize, requestDelay = config.ai.requestDelay } = await request.json();
 
     if (!repoUrl) {
       return NextResponse.json({ error: 'Repository URL is required' }, { status: 400 });
@@ -64,123 +156,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No open issues found in this repository' }, { status: 404 });
     }
 
-    // BATCHING DECISION LOGIC
-    const BATCH_THRESHOLD = 10; // If more than 10 issues, use batching
-    const shouldUseBatching = issues.length > BATCH_THRESHOLD;
-
-    if (shouldUseBatching && batchIndex === 0) {
-      // First batch request - return batching info to client
-      const batches = Math.ceil(issues.length / batchSize);
-      
-      console.log(`🔄 Large repository detected (${issues.length} issues). Using batch processing: ${batches} batches`);
-      
-      return NextResponse.json({
-        requiresBatching: true,
-        totalBatches: batches,
-        totalIssues: issues.length,
-        batchSize,
-        message: `Large repository detected. Will process in ${batches} batches.`
-      });
-    }
-
-    // If we get here, either:
-    // 1. It's a small repo (no batching needed)
-    // 2. It's a batch request (batchIndex > 0)
-    
-    if (shouldUseBatching && batchIndex > 0) {
-      // This should be handled by the batch endpoint, but if called here, redirect logic
-      console.log(`🔄 Batch request detected for batch ${batchIndex}`);
-      
-      // Calculate which issues to process in this batch
-      const startIndex = batchIndex * batchSize;
-      const endIndex = Math.min(startIndex + batchSize, issues.length);
-      const batchIssues = issues.slice(startIndex, endIndex);
-      
-      console.log(`📦 Processing batch ${batchIndex}: issues ${startIndex + 1}-${endIndex} of ${issues.length}`);
-
-    // Use mock analysis if no API key is configured
     const shouldUseMock = !process.env.OPENAI_API_KEY;
     if (shouldUseMock) {
       console.warn('⚠️ No OPENAI_API_KEY found, using mock analysis');
     }
 
-      // Analyze this specific batch
-      const analyzedBatchIssues = await analyzeBatchIssues(batchIssues, shouldUseMock);
+    console.log(`📊 Starting analysis for ${issues.length} issues`);
 
-      return NextResponse.json({
-        data: {
-          issues: analyzedBatchIssues,
-          summary: calculateSummary(analyzedBatchIssues)
-        },
-        batchIndex,
-        isLastBatch: endIndex >= issues.length
-      });
-    }
-
-    // SMALL REPO - Process all issues at once (original logic)
-    console.log(`📊 Small repository (${issues.length} issues), processing in single batch`);
-    
-    const shouldUseMock = !process.env.OPENAI_API_KEY;
-    if (shouldUseMock) {
-      console.warn('⚠️ No OPENAI_API_KEY found, using mock analysis');
-    }
-
-    // For small repos, use SSE streaming as before
-    const progress: AnalysisProgressType = {
-      totalIssues: issues.length,
-      analyzedIssues: 0,
-      currentStage: 'fetching',
-      issues: {},
-      estimatedTotalTime: issues.length * 3000, // 3s per issue estimate
-      startTime: Date.now()
-    };
-
-    // Initialize progress for each issue
-    issues.forEach(issue => {
-      progress.issues[issue.number] = {
-        title: issue.title,
-        status: 'pending',
-        progress: 0
-      };
-    });
-
-    console.log('📋 Progress tracker initialized');
-
-    // Create SSE stream
     const stream = new TransformStream();
     const writer = stream.writable.getWriter();
     const encoder = new TextEncoder();
 
-    console.log('🚀 Sending initial progress...');
-
-    // Send initial progress
-    try {
-      writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'progress', data: progress })}\n\n`));
-      console.log('✅ Initial progress sent successfully');
-    } catch (writeError) {
-      console.error('❌ Failed to send initial progress:', writeError);
-    }
-
-    // Start analysis in background and stream progress
-    analyzeWithProgress(issues, progress, writer, encoder, shouldUseMock).then(async (analyzedIssues) => {
-      // Calculate final summary
-      const summary = calculateSummary(analyzedIssues);
-
-      const result: AnalysisResult = {
-        issues: analyzedIssues,
-        summary
-      };
-
-      console.log(`✅ Analysis complete for ${repoInfo.owner}/${repoInfo.repo}`);
-      console.log(`\n📊 ANALYSIS SUMMARY for ${repoInfo.owner}/${repoInfo.repo}:`);
-      console.log(`Total issues analyzed: ${analyzedIssues.length}`);
-      console.log(`Complexity distribution:`, summary.complexity_distribution);
-      console.log(`Category breakdown:`, summary.category_breakdown);
-      console.log(`Total budget: $${summary.total_budget_min} - $${summary.total_budget_max}`);
-      console.log(`Average confidence: ${(summary.average_confidence * 100).toFixed(1)}%\n`);
-
-      // Send final result
-      writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'complete', data: result })}\n\n`));
+    analyzeWithTransparentBatching(issues, writer, encoder, shouldUseMock, {
+      batchSize,
+      requestDelay,
+      repoUrl
+    }).then(() => {
       writer.close();
     });
 
@@ -191,7 +182,7 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
         'Content-Encoding': 'none',
         'Transfer-Encoding': 'chunked',
-        'X-Accel-Buffering': 'no', // <— 🟢 CRITICAL for Vercel/Node to avoid buffering
+        'X-Accel-Buffering': 'no',
       },
     });
 
@@ -204,156 +195,241 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Batch analysis function (without SSE)
-async function analyzeBatchIssues(issues: any[], shouldUseMock: boolean): Promise<any[]> {
-  const analyzedIssues: any[] = [];
-  
-  for (let i = 0; i < issues.length; i++) {
-    const issue = issues[i];
-    
-    try {
-      let analysis;
-      
-      if (shouldUseMock) {
-        // Use mock analysis
-        analysis = mockAnalyzeIssue(issue);
-        // Simulate some processing time
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } else {
-        // Real AI analysis with multi-stage pipeline
-        const strategy = selectAnalysisStrategy(issue);
-        let analysisContent = '';
-
-        // Stage 1: Summarization (if needed)
-        if (strategy.needsSummarization) {
-          analysisContent = await createIssueSummary(issue);
-        } else {
-          analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
-        }
-
-        // Stage 2: Analysis
-        analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
-      }
-      
-      // Store result
-      analyzedIssues.push({ ...issue, ...analysis });
-
-    } catch (error) {
-      console.error(`Error analyzing issue #${issue.number}:`, error);
-      
-      // Use fallback analysis
-      const fallbackAnalysis = getFallbackAnalysis(issue);
-      analyzedIssues.push({ ...issue, ...fallbackAnalysis });
-    }
-
-    // Add small delay between issues
-    if (i < issues.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-
-  console.log(`✅ Batch analysis complete: ${analyzedIssues.length} issues processed`);
-  return analyzedIssues;
-}
-
-// Keep your existing analyzeWithProgress function for small repos
-async function analyzeWithProgress(
+// New function: Transparent batch processing with SSE
+async function analyzeWithTransparentBatching(
   issues: any[], 
-  progress: AnalysisProgressType, 
   writer: any, 
   encoder: any, 
-  shouldUseMock: boolean
-): Promise<any[]> {
+  shouldUseMock: boolean,
+  options: { batchSize: number; requestDelay: number; repoUrl: string }
+): Promise<void> {
+  
+  const { batchSize, requestDelay, repoUrl } = options;
+  
+  // Sort issues by issue number (ascending) to match the progress display
+  const sortedIssues = [...issues].sort((a, b) => a.number - b.number);
+  
+  const totalBatches = Math.ceil(sortedIssues.length / batchSize);
   const analyzedIssues: any[] = [];
   
-  const updateProgress = async () => {
-    writer.write(encoder.encode(`data: ${JSON.stringify({ type: 'progress', data: progress })}\n\n`));
+  // Initialize progress tracker
+  const progress: AnalysisProgressType = {
+    totalIssues: sortedIssues.length,
+    analyzedIssues: 0,
+    currentStage: 'fetching',
+    issues: {},
+    estimatedTotalTime: sortedIssues.length * 3000,
+    startTime: Date.now(),
+    // Add batch info for transparency
+    batchInfo: {
+      currentBatch: 0,
+      totalBatches,
+      completedBatches: 0,
+      totalIssues: sortedIssues.length
+    }
   };
 
-  // Update stage to summarizing
-  progress.currentStage = 'summarizing';
-  await updateProgress();
+  // Initialize progress in the same sorted order
+  sortedIssues.forEach(issue => {
+    progress.issues[issue.number] = {
+      title: issue.title,
+      status: 'pending',
+      progress: 0
+    };
+  });
 
-  for (let i = 0; i < issues.length; i++) {
-    const issue = issues[i];
-    
-    // Update issue status to summarizing
-    progress.issues[issue.number].status = 'summarizing';
-    progress.issues[issue.number].progress = 25;
-    await updateProgress();
+  // Send initial progress
+  await sendProgress(writer, encoder, progress);
 
-    try {
-      let analysis;
-      
-      if (shouldUseMock) {
-        // Use mock analysis
-        progress.issues[issue.number].status = 'analyzing';
-        progress.issues[issue.number].currentStage = 'mock';
-        progress.issues[issue.number].progress = 75;
-        await updateProgress();
+  console.log(`🔄 Starting transparent batch processing: ${totalBatches} batches`);
 
-        analysis = mockAnalyzeIssue(issue);
+  // Process issues in batches, in display order
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const startIndex = batchIndex * batchSize;
+    const endIndex = Math.min(startIndex + batchSize, sortedIssues.length);
+    const batchIssues = sortedIssues.slice(startIndex, endIndex);
+
+    // Notify batch start
+    await sendBatchStart(writer, encoder, {
+      batchIndex,
+      totalBatches,
+      processedIssues: analyzedIssues.length,
+      totalIssues: sortedIssues.length
+    });
+
+    console.log(`📦 Processing batch ${batchIndex + 1}/${totalBatches} (issues ${startIndex + 1}-${endIndex})`);
+
+    // Update batch info in progress
+    progress.batchInfo = {
+      currentBatch: batchIndex + 1,
+      totalBatches,
+      completedBatches: batchIndex,
+      totalIssues: sortedIssues.length
+    };
+    await sendProgress(writer, encoder, progress);
+
+    // Process each issue in current batch with individual progress
+    for (let i = 0; i < batchIssues.length; i++) {
+      const issue = batchIssues[i];
+      const globalIndex = startIndex + i;
+
+      try {
+        const analyzedIssue = await analyzeSingleIssueWithProgress(
+          issue, 
+          progress, 
+          writer, 
+          encoder, 
+          shouldUseMock,
+          globalIndex
+        );
         
-        // Simulate some processing time for better UX
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        analyzedIssues.push(analyzedIssue);
+
+      } catch (error) {
+        console.error(`Error analyzing issue #${issue.number}:`, error);
         
-      } else {
-        // Real AI analysis with multi-stage pipeline
-        const strategy = selectAnalysisStrategy(issue);
-        let analysisContent = '';
-
-        // Stage 1: Summarization (if needed)
-        if (strategy.needsSummarization) {
-          progress.issues[issue.number].currentStage = 'Creating summary';
-          await updateProgress();
-
-          analysisContent = await createIssueSummary(issue);
-          progress.issues[issue.number].summaryTokens = estimateTokens(analysisContent);
-          progress.issues[issue.number].progress = 50;
-        } else {
-          analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
-          progress.issues[issue.number].progress = 50;
-        }
-        await updateProgress();
-
-        // Stage 2: Analysis
-        progress.issues[issue.number].status = 'analyzing';
-        progress.issues[issue.number].currentStage = strategy.model;
-        progress.issues[issue.number].progress = 75;
-        await updateProgress();
-
-        analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+        // Mark as error but continue
+        progress.issues[issue.number].status = 'error';
+        progress.issues[issue.number].progress = 100;
+        progress.analyzedIssues++;
+        await sendProgress(writer, encoder, progress);
+        
+        // Use fallback analysis
+        const fallbackAnalysis = getFallbackAnalysis(issue);
+        analyzedIssues.push({ ...issue, ...fallbackAnalysis });
       }
-      
-      // Mark as complete
-      progress.issues[issue.number].status = 'complete';
-      progress.issues[issue.number].progress = 100;
-      progress.analyzedIssues++;
-      await updateProgress();
 
-      // Store result
-      analyzedIssues.push({ ...issue, ...analysis });
-
-    } catch (error) {
-      console.error(`Error analyzing issue #${issue.number}:`, error);
-      progress.issues[issue.number].status = 'error';
-      progress.issues[issue.number].progress = 100;
-      progress.analyzedIssues++;
-      await updateProgress();
-      
-      // Use fallback analysis
-      const fallbackAnalysis = getFallbackAnalysis(issue);
-      analyzedIssues.push({ ...issue, ...fallbackAnalysis });
+      // Respect request delay from config
+      if (i < batchIssues.length - 1 && requestDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, requestDelay));
+      }
     }
 
-    // Add small delay between issues for better UX
-    if (i < issues.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+    // Notify batch completion
+    await sendBatchComplete(writer, encoder, {
+      batchIndex,
+      totalBatches,
+      processedIssues: analyzedIssues.length,
+      totalIssues: sortedIssues.length
+    });
+
+    console.log(`✅ Batch ${batchIndex + 1} completed: ${batchIssues.length} issues analyzed`);
+
+    // Show partial results after each batch
+    if (analyzedIssues.length > 0) {
+      const partialSummary = calculateSummary(analyzedIssues);
+      const partialResult: AnalysisResult = {
+        issues: analyzedIssues,
+        summary: partialSummary,
+        metadata: {
+          repoUrl,
+          analyzedAt: new Date().toISOString(),
+          analysisType: 'batch',
+          batchProgress: {
+            current: batchIndex + 1,
+            total: totalBatches,
+            isComplete: false
+          }
+        }
+      };
+
+      // Send partial results for immediate display
+      await sendPartialResult(writer, encoder, partialResult);
     }
   }
 
-  progress.currentStage = 'complete';
-  await updateProgress();
+  // Finalize results
+  console.log(`✅ All batches complete: ${analyzedIssues.length} issues analyzed`);
+  
+  const finalSummary = calculateSummary(analyzedIssues);
+   const finalResult: AnalysisResult = {
+    issues: analyzedIssues, // Original processing order
+    // OR for table order:
+    // issues: analyzedIssues.sort((a, b) => (sortMap.get(a.number) || 0) - (sortMap.get(b.number) || 0)),
+    summary: finalSummary,
+    metadata: {
+      repoUrl,
+      analyzedAt: new Date().toISOString(),
+      analysisType: 'batch',
+      batchProgress: {
+        current: totalBatches,
+        total: totalBatches,
+        isComplete: true
+      }
+    }
+  };
 
-  return analyzedIssues;
+  // Mark progress as complete
+  progress.currentStage = 'complete';
+  progress.analyzedIssues = analyzedIssues.length;
+  await sendProgress(writer, encoder, progress);
+
+  // Send final result
+  await sendComplete(writer, encoder, finalResult);
+}
+
+// Helper function to analyze single issue with progress updates
+async function analyzeSingleIssueWithProgress(
+  issue: any,
+  progress: AnalysisProgressType,
+  writer: any,
+  encoder: any,
+  shouldUseMock: boolean,
+  globalIndex: number
+): Promise<any> {
+  
+  // Update issue status to summarizing
+  progress.issues[issue.number].status = 'summarizing';
+  progress.issues[issue.number].progress = 25;
+  await sendProgress(writer, encoder, progress);
+
+  let analysis;
+  
+  if (shouldUseMock) {
+    // Mock analysis with progress simulation
+    progress.issues[issue.number].status = 'analyzing';
+    progress.issues[issue.number].currentStage = 'mock';
+    progress.issues[issue.number].progress = 75;
+    await sendProgress(writer, encoder, progress);
+
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    analysis = mockAnalyzeIssue(issue);
+    
+  } else {
+    // Real AI analysis with progress updates
+    const strategy = selectAnalysisStrategy(issue);
+    let analysisContent = '';
+
+    // Stage 1: Summarization
+    if (strategy.needsSummarization) {
+      progress.issues[issue.number].currentStage = 'Creating summary';
+      await sendProgress(writer, encoder, progress);
+
+      analysisContent = await createIssueSummary(issue);
+      progress.issues[issue.number].summaryTokens = estimateTokens(analysisContent);
+      progress.issues[issue.number].progress = 50;
+    } else {
+      analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
+      progress.issues[issue.number].progress = 50;
+    }
+    await sendProgress(writer, encoder, progress);
+
+    // Stage 2: Analysis
+    progress.issues[issue.number].status = 'analyzing';
+    progress.issues[issue.number].currentStage = strategy.model;
+    progress.issues[issue.number].progress = 75;
+    await sendProgress(writer, encoder, progress);
+
+    analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+  }
+  
+  // Mark as complete
+  progress.issues[issue.number].status = 'complete';
+  progress.issues[issue.number].progress = 100;
+  progress.analyzedIssues++;
+  await sendProgress(writer, encoder, progress);
+
+  return { ...issue, ...analysis };
 }

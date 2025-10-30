@@ -218,6 +218,15 @@ Response:
 }
 ```
 
+## Handling batching decisions:
+
+- Client calls /api/analyze with repo URL
+- Server checks if batching is needed:
+- If > 10 issues: Returns batching info to client
+- If ≤ 10 issues: Uses original SSE streaming
+- Client processes batches by calling /api/analyze-batch for each batch
+- Client accumulates results and shows progress
+
 ---
 
 ## 🚀 Deployment

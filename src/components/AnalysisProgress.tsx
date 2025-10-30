@@ -33,6 +33,24 @@ export function AnalysisProgress({ progress, repoUrl }: AnalysisProgressProps) {
     }
   };
 
+  // Sort issues for display - choose one of these options:
+
+  // Option 1: Sort by issue number (ascending - oldest first)
+  const sortedIssues = Object.entries(progress.issues).sort(([aNum], [bNum]) => 
+    parseInt(aNum) - parseInt(bNum)
+  );
+
+  // Option 2: Sort by issue number (descending - newest first, like GitHub)
+  // const sortedIssues = Object.entries(progress.issues).sort(([aNum], [bNum]) => 
+  //   parseInt(bNum) - parseInt(aNum)
+  // );
+
+  // Option 3: Sort by status (pending first, then in progress, then complete)
+  // const statusPriority = { pending: 0, summarizing: 1, analyzing: 2, complete: 3, error: 4 };
+  // const sortedIssues = Object.entries(progress.issues).sort(([, a], [, b]) => 
+  //   statusPriority[a.status as keyof typeof statusPriority] - statusPriority[b.status as keyof typeof statusPriority]
+  // );
+
   return (
     <div className="glass-card rounded-2xl border border-gray-800 p-6">
       {/* Header */}
@@ -84,7 +102,7 @@ export function AnalysisProgress({ progress, repoUrl }: AnalysisProgressProps) {
       <div className="space-y-4">
         <h3 className="text-lg font-semibold text-white mb-4">Issue Analysis Progress</h3>
         
-        {Object.entries(progress.issues).map(([issueNumber, issueProgress]) => (
+        {sortedIssues.map(([issueNumber, issueProgress]) => (
           <div key={issueNumber} className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 hover:border-gray-600 transition-colors">
             <div className="flex items-start justify-between mb-2">
               <div className="flex items-center space-x-3 flex-1 min-w-0">

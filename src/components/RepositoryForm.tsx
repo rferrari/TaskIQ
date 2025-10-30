@@ -21,7 +21,8 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
     { name: 'Nounspace', url: 'https://github.com/Nounspace/nounspace.ts' },
     { name: 'SkateHive', url: 'https://github.com/SkateHive/skatehive3.0' },
     { name: 'Next.js', url: 'https://github.com/vercel/next.js' },
-    { name: 'TypeScript', url: 'https://github.com/microsoft/TypeScript' }
+    { name: 'TypeScript', url: 'https://github.com/microsoft/TypeScript' },
+    { name: 'Zcash', url: 'https://github.com/zcash/zcash' }
   ];
 
 

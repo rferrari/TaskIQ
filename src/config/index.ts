@@ -1,5 +1,5 @@
+// src/config/index.ts
 // Central configuration for the entire application
-
 export interface ModelConfig {
   id: string;
   maxContext: number;
@@ -7,6 +7,7 @@ export interface ModelConfig {
   priceInput: number;
   priceOutput: number;
   speed: string;
+  tpm: number;
   description: string;
 }
 
@@ -43,6 +44,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     maxCompletion: 131072,
     priceInput: 0.05,
     priceOutput: 0.08,
+    tpm: 6000,
     speed: '560 T/SEC',
     description: 'Fast & cheap - ideal for simple issues and summarization'
   },
@@ -52,6 +54,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     maxCompletion: 65536,
     priceInput: 0.075,
     priceOutput: 0.30,
+    tpm: 6000,
     speed: '1000 T/SEC',
     description: 'Balanced - good for medium complexity issues'
   },
@@ -61,6 +64,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     maxCompletion: 32768,
     priceInput: 0.59,
     priceOutput: 0.79,
+    tpm: 6000,
     speed: '280 T/SEC',
     description: 'Powerful - best for complex issues requiring deep analysis'
   }
@@ -86,11 +90,11 @@ export const config: AppConfig = {
     // Token management
     summaryTargetTokens: 1500,
     analysisMaxTokens: 2000,
-    maxIssueTokens: 50000,
+    maxIssueTokens: 25000,
     
     // Performance tuning
-    batchSize: 5,
-    requestDelay: 200, // ms between API calls
+    batchSize: 25,
+    requestDelay: 900, // ms between API calls
   },
   ui: {
     defaultTheme: 'dark',
