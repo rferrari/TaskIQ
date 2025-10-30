@@ -37,10 +37,10 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-white mb-4">
-              Issue Estimator
+              TaskIQ
             </h1>
             <p className="text-slate-400 text-lg max-w-md mx-auto">
-              Analyze GitHub repositories and estimate development costs with AI precision
+              Analyze GitHub repositories and estimate development costs with AI that not only estimates, but explains its reasoning.
             </p>
           </div>
 
@@ -105,10 +105,10 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
         <div className="glass-card rounded-xl p-6 text-center border border-slate-700/50">
           <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center mx-auto mb-4">
-            <span className="text-lg">🤖</span>
+            <span className="text-lg">🧠</span>
           </div>
-          <h3 className="font-semibold text-white mb-2">AI Powered</h3>
-          <p className="text-slate-400 text-sm">Advanced analysis with machine learning</p>
+          <h3 className="font-semibold text-white mb-2">Reasoning Transparency</h3>
+          <p className="text-slate-400 text-sm">Understand why each estimate was made view key factors, risks, and actions.</p>
         </div>
         
         <div className="glass-card rounded-xl p-6 text-center border border-slate-700/50">
@@ -116,7 +116,7 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
             <span className="text-lg">💰</span>
           </div>
           <h3 className="font-semibold text-white mb-2">Cost Estimation</h3>
-          <p className="text-slate-400 text-sm">Accurate budget planning</p>
+          <p className="text-slate-400 text-sm">Estimate task budgets with consistent, explainable logic.</p>
         </div>
         
         <div className="glass-card rounded-xl p-6 text-center border border-slate-700/50">
@@ -124,7 +124,7 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
             <span className="text-lg">⚡</span>
           </div>
           <h3 className="font-semibold text-white mb-2">Fast Analysis</h3>
-          <p className="text-slate-400 text-sm">Quick insights in seconds</p>
+          <p className="text-slate-400 text-sm">Scan any GitHub repo and get structured, exportable data in seconds.</p>
         </div>
       </div>
     </div>
