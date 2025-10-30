@@ -29,20 +29,36 @@ console.log('🤖 Available LLM Models:', availableModels);
 /** --- UTILITIES --- **/
 
 function parseAIResponse(raw: string): any {
+  console.log(`🔄 Parsing AI response...`);
+  
   let cleaned = raw.trim()
     .replace(/```json\s*/g, '')
     .replace(/```/g, '')
     .replace(/^json\s*/i, '')
     .trim();
 
-  try { return JSON.parse(cleaned); } catch { }
+  console.log(`🔄 Cleaned response: ${cleaned.substring(0, 200)}...`);
+
+  try { 
+    const result = JSON.parse(cleaned);
+    console.log(`✅ Successfully parsed JSON directly`);
+    return result;
+  } catch (firstError) {
+    console.warn(`⚠️ Direct parse failed, trying to extract JSON...`);
+  }
 
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
-    try { return JSON.parse(jsonMatch[0]); } catch { }
+    try { 
+      const result = JSON.parse(jsonMatch[0]);
+      console.log(`✅ Successfully extracted and parsed JSON`);
+      return result;
+    } catch (secondError: any) {
+      console.error(`❌ JSON extraction failed:`, secondError.message);
+    }
   }
 
-  throw new Error('Failed to parse AI response');
+  throw new Error('Failed to parse AI response: No valid JSON found');
 }
 
 function getFallbackAnalysis(issue: GitHubIssue): AIModelResponse {
@@ -108,6 +124,11 @@ async function tryAnalyzeWithModel(model: string, issue: GitHubIssue): Promise<A
   const prompt = createAnalysisPrompt(issue);
   
   try {
+    console.log(`\n📝 PROMPT for issue #${issue.number}:`);
+    console.log('--- Prompt Start ---');
+    console.log(prompt.substring(0, 500) + '...'); // Show first 500 chars
+    console.log('--- Prompt End ---\n');
+    
     const completion = await openai.chat.completions.create({
       model,
       messages: [
@@ -125,11 +146,27 @@ async function tryAnalyzeWithModel(model: string, issue: GitHubIssue): Promise<A
     const response = completion.choices[0]?.message?.content;
     if (!response) throw new Error('No response from AI');
 
+    console.log(`\n🤖 RAW LLM RESPONSE for issue #${issue.number}:`);
+    console.log('--- Response Start ---');
+    console.log(response);
+    console.log('--- Response End ---\n');
+
+    // Parse and validate
     const parsed = parseAIResponse(response);
-    return validateAIResponse(parsed);
+    console.log(`✅ PARSED JSON for issue #${issue.number}:`);
+    console.log(JSON.stringify(parsed, null, 2));
+    
+    const validated = validateAIResponse(parsed);
+    console.log(`✅ VALIDATED ANALYSIS for issue #${issue.number}:`);
+    console.log(JSON.stringify(validated, null, 2));
+    
+    return validated;
   } catch (error: any) {
-    console.warn(`AI model ${model} failed:`, error.message);
-    throw error; // Re-throw to handle in the main loop
+    console.error(`❌ AI model ${model} failed for issue #${issue.number}:`, error.message);
+    if (error.response) {
+      console.error('Error details:', error.response.data);
+    }
+    throw error;
   }
 }
 
@@ -215,15 +252,20 @@ export async function analyzeIssueWithAI(
     return getFallbackAnalysis(issue);
   }
 
+  console.log(`\n🎯 STARTING ANALYSIS for issue #${issue.number}: "${issue.title}"`);
+  console.log(`🏷️ Labels: ${issue.labels.map(l => l.name).join(', ')}`);
+  console.log(`💬 Comments: ${issue.comments}`);
+  console.log(`📝 Body length: ${issue.body?.length || 0} chars\n`);
+
   // Iterate over models sequentially
   for (const model of availableModels) {
     try {
-      console.log(`🧠 Analyzing issue #${issue.number} with model: ${model}`);
+      console.log(`🧠 Attempting model: ${model}`);
       const analysis = await tryAnalyzeWithModel(model, issue);
-      console.log(`✅ Success with model: ${model} for issue #${issue.number}`);
+      console.log(`🎉 SUCCESS with model: ${model} for issue #${issue.number}`);
       return analysis;
     } catch (error: any) {
-      console.warn(`⚠️ Model ${model} failed for issue #${issue.number}: ${error.message}`);
+      console.error(`💥 Model ${model} failed for issue #${issue.number}: ${error.message}`);
       
       // Handle rate limit separately
       if (error.status === 429) {
@@ -238,17 +280,23 @@ export async function analyzeIssueWithAI(
   }
 
   // If all models failed
-  console.error(`🔴 All models failed for issue #${issue.number}, using fallback`);
+  console.error(`🔴 ALL MODELS FAILED for issue #${issue.number}, using fallback`);
   return getFallbackAnalysis(issue);
 }
 
 // For development/testing without API keys
+// For development/testing without API keys
 export function mockAnalyzeIssue(issue: GitHubIssue): AIModelResponse {
+  console.log(`🤖 USING MOCK ANALYSIS for issue #${issue.number}`);
+  
   const analysis = getFallbackAnalysis(issue);
   
   // Add some randomness to make it feel more realistic
   analysis.confidence = Math.min(0.7 + (Math.random() * 0.25), 0.95);
   analysis.ai_analysis = `Mock AI analysis: This ${analysis.category} issue has ${['minimal', 'moderate', 'significant'][analysis.complexity - 1]} complexity.`;
+  
+  console.log(`🎭 MOCK ANALYSIS RESULT for issue #${issue.number}:`);
+  console.log(JSON.stringify(analysis, null, 2));
   
   return analysis;
 }

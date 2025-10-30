@@ -59,6 +59,22 @@ export async function POST(request: NextRequest) {
     };
 
     console.log(`✅ Analysis complete for ${repoInfo.owner}/${repoInfo.repo}`);
+
+    // In your API route, after analysis is complete:
+    console.log(`\n📊 ANALYSIS SUMMARY for ${repoInfo.owner}/${repoInfo.repo}:`);
+    console.log(`Total issues analyzed: ${analyzedIssues.length}`);
+    console.log(`Complexity distribution:`, summary.complexity_distribution);
+    console.log(`Category breakdown:`, summary.category_breakdown);
+    console.log(`Total budget: $${summary.total_budget_min} - $${summary.total_budget_max}`);
+    console.log(`Average confidence: ${(summary.average_confidence * 100).toFixed(1)}%\n`);
+
+    // Log a few sample results
+    console.log(`🎯 SAMPLE ANALYSES:`);
+    analyzedIssues.slice(0, 3).forEach(issue => {
+      console.log(`#${issue.number}: "${issue.title.substring(0, 40)}..."`);
+      console.log(`  → Complexity: ${issue.complexity}, Cost: ${issue.estimated_cost}, Confidence: ${(issue.confidence * 100).toFixed(0)}%`);
+    });
+
     return NextResponse.json(result);
   } catch (error) {
     console.error('Analysis error:', error);
@@ -85,7 +101,7 @@ function calculateSummary(issues: any[]) {
       totalBudgetMax += parseInt(costMatch[2] || costMatch[1]);
     }
   });
-
+ 
   return {
     total_issues: issues.length,
     total_budget_min: totalBudgetMin,
