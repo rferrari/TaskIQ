@@ -3,11 +3,9 @@ import { AnalyzedIssue } from '@/types';
 export function generateCSV(issues: AnalyzedIssue[]): string {
   const headers = [
     'issue_number',
-    'title', 
-    'complexity',
+    'title',
+    'complexity', 
     'estimated_cost',
-    'category',
-    'confidence',
     'labels',
     'url'
   ];
@@ -16,9 +14,7 @@ export function generateCSV(issues: AnalyzedIssue[]): string {
     issue.number,
     `"${escapeCSV(issue.title)}"`,
     issue.complexity,
-    issue.estimated_cost,
-    issue.category,
-    issue.confidence.toFixed(2),
+    `"${issue.estimated_cost}"`,
     `"${issue.labels.map(l => l.name).join(', ')}"`,
     issue.html_url
   ]);
@@ -27,11 +23,11 @@ export function generateCSV(issues: AnalyzedIssue[]): string {
 }
 
 function escapeCSV(str: string): string {
-  return str.replace(/"/g, '""').replace(/\n/g, ' ');
+  return str.replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, ' ');
 }
 
 export function downloadCSV(csv: string, filename: string) {
-  const blob = new Blob([csv], { type: 'text/csv' });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

@@ -12,11 +12,26 @@ export function IssuesTable({ issues }: IssuesTableProps) {
   const [sortField, setSortField] = useState<'complexity' | 'estimated_cost' | 'confidence'>('complexity');
   const [filterComplexity, setFilterComplexity] = useState<string>('all');
 
+
+  const getComplexityLabel = (complexity: number): string => {
+    const labels = {
+      1: 'Trivial',
+      2: 'Simple', 
+      3: 'Moderate',
+      4: 'Complex',
+      5: 'Very Complex'
+    };
+    return labels[complexity as keyof typeof labels] || 'Unknown';
+  };
+
+
   const sortedAndFilteredIssues = useMemo(() => {
     let filtered = issues;
     
+
+
     if (filterComplexity !== 'all') {
-      filtered = filtered.filter(issue => issue.complexity === parseInt(filterComplexity));
+      filtered = filtered.filter(issue => getComplexityLabel(issue.complexity) === filterComplexity);
     }
     
     return [...filtered].sort((a, b) => {
@@ -74,14 +89,14 @@ export function IssuesTable({ issues }: IssuesTableProps) {
       <div className="p-4 border-b border-gray-800 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
         <div className="flex gap-3 flex-wrap">
           <div className="min-w-[140px]">
-            <label htmlFor="sort" className="block text-xs font-medium text-gray-300 mb-1">
+            <label htmlFor="sort" className="block text-sm font-medium text-gray-300 mb-2">
               Sort by
             </label>
             <select
               id="sort"
               value={sortField}
               onChange={(e) => setSortField(e.target.value as any)}
-              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-1.5 px-2 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-xs"
+              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-2 px-3 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-sm"
             >
               <option value="complexity">Complexity</option>
               <option value="estimated_cost">Cost</option>
@@ -89,29 +104,29 @@ export function IssuesTable({ issues }: IssuesTableProps) {
             </select>
           </div>
           
-          <div className="min-w-[140px]">
-            <label htmlFor="filter" className="block text-xs font-medium text-gray-300 mb-1">
+          <div className="min-w-[160px]">
+            <label htmlFor="filter" className="block text-sm font-medium text-gray-300 mb-2">
               Filter complexity
             </label>
             <select
               id="filter"
               value={filterComplexity}
               onChange={(e) => setFilterComplexity(e.target.value)}
-              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-1.5 px-2 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-xs"
+              className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-2 px-3 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-sm"
             >
-              <option value="all">All</option>
-              <option value="1">1 - Trivial</option>
-              <option value="2">2 - Simple</option>
-              <option value="3">3 - Moderate</option>
-              <option value="4">4 - Complex</option>
-              <option value="5">5 - Very Complex</option>
+              <option value="all">All Complexities</option>
+              <option value="Trivial">Trivial</option>
+              <option value="Simple">Simple</option>
+              <option value="Moderate">Moderate</option>
+              <option value="Complex">Complex</option>
+              <option value="Very Complex">Very Complex</option>
             </select>
           </div>
         </div>
 
         <button
           onClick={handleExportCSV}
-          className="btn-primary px-3 py-1.5 rounded-lg text-xs font-medium mt-1 sm:mt-0"
+          className="btn-primary px-4 py-2 rounded-lg text-sm font-medium mt-2 sm:mt-0"
         >
           Export CSV
         </button>
@@ -122,19 +137,19 @@ export function IssuesTable({ issues }: IssuesTableProps) {
         <table className="w-full text-sm">
           <thead className="bg-gray-900/50">
             <tr>
-              <th scope="col" className="py-2 pl-3 pr-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8/12">
+              <th scope="col" className="py-3 pl-4 pr-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-7/12">
                 Issue
               </th>
-              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-1/12">
-                Level
+              <th scope="col" className="py-3 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+                Complexity
               </th>
-              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+              <th scope="col" className="py-3 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
                 Cost
               </th>
-              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+              <th scope="col" className="py-3 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
                 Type
               </th>
-              <th scope="col" className="py-2 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-2/12">
+              <th scope="col" className="py-3 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-1/12">
                 Conf
               </th>
             </tr>
@@ -142,24 +157,24 @@ export function IssuesTable({ issues }: IssuesTableProps) {
           <tbody className="divide-y divide-gray-800">
             {sortedAndFilteredIssues.map((issue) => (
               <tr key={issue.id} className="hover:bg-gray-800/30 transition-colors">
-                {/* Issue Column - Now much more compact */}
-                <td className="py-2 pl-3 pr-2">
-                  <div className="flex flex-col space-y-1">
+                {/* Issue Column */}
+                <td className="py-3 pl-4 pr-2">
+                  <div className="flex flex-col space-y-2">
                     <a
                       href={issue.html_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs font-medium text-blue-400 hover:text-blue-300 leading-tight"
+                      className="text-sm font-medium text-blue-400 hover:text-blue-300 leading-tight"
                       title={`#${issue.number} ${issue.title}`}
                     >
-                      <span className="text-gray-500">#{issue.number}</span>{' '}
-                      {truncateText(issue.title, 60)}
+                      <span className="text-gray-500 font-mono">#{issue.number}</span>{' '}
+                      {truncateText(issue.title, 50)}
                     </a>
                     <div className="flex flex-wrap gap-1">
                       {issue.labels.slice(0, 2).map((label) => (
                         <span
                           key={label.name}
-                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border"
+                          className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border"
                           style={{ 
                             backgroundColor: `#${label.color}15`,
                             color: `#${label.color}`,
@@ -167,12 +182,12 @@ export function IssuesTable({ issues }: IssuesTableProps) {
                           }}
                           title={label.name}
                         >
-                          {truncateText(label.name, 12)}
+                          {truncateText(label.name, 15)}
                         </span>
                       ))}
                       {issue.labels.length > 2 && (
                         <span 
-                          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-300 border border-gray-600"
+                          className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-700 text-gray-300 border border-gray-600"
                           title={`+${issue.labels.length - 2} more labels`}
                         >
                           +{issue.labels.length - 2}
@@ -182,41 +197,41 @@ export function IssuesTable({ issues }: IssuesTableProps) {
                   </div>
                 </td>
                 
-                {/* Complexity Level */}
-                <td className="py-2 px-2">
+                {/* Complexity */}
+                <td className="py-3 px-2">
                   <span 
-                    className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${getComplexityColor(issue.complexity)}`}
-                    title={`Complexity level ${issue.complexity}`}
+                    className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${getComplexityColor(issue.complexity)}`}
+                    title={`Complexity: ${getComplexityLabel(issue.complexity)} (Level ${issue.complexity})`}
                   >
-                    {issue.complexity}
+                    {truncateText(getComplexityLabel(issue.complexity), 10)}
                   </span>
                 </td>
                 
                 {/* Estimated Cost */}
-                <td className="py-2 px-2 text-xs font-medium text-white">
+                <td className="py-3 px-2 text-sm font-medium text-white">
                   {issue.estimated_cost}
                 </td>
                 
                 {/* Category Type */}
-                <td className="py-2 px-2">
+                <td className="py-3 px-2">
                   <span 
-                    className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium capitalize ${getCategoryColor(issue.category)}`}
+                    className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium capitalize ${getCategoryColor(issue.category)}`}
                     title={issue.category}
                   >
-                    {truncateText(issue.category, 8)}
+                    {truncateText(issue.category, 12)}
                   </span>
                 </td>
                 
                 {/* Confidence */}
-                <td className="py-2 px-2">
-                  <div className="flex items-center space-x-1" title={`${(issue.confidence * 100).toFixed(0)}% confidence`}>
-                    <div className="w-10 bg-gray-700 rounded-full h-1.5">
+                <td className="py-3 px-2">
+                  <div className="flex flex-col items-center space-y-1" title={`${(issue.confidence * 100).toFixed(0)}% confidence`}>
+                    <div className="w-12 bg-gray-700 rounded-full h-2">
                       <div 
-                        className="bg-green-500 h-1.5 rounded-full" 
+                        className="bg-green-500 h-2 rounded-full" 
                         style={{ width: `${issue.confidence * 100}%` }}
                       ></div>
                     </div>
-                    <span className="text-xs text-gray-300 min-w-8">
+                    <span className="text-xs text-gray-300 font-medium">
                       {(issue.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -229,7 +244,7 @@ export function IssuesTable({ issues }: IssuesTableProps) {
 
       {/* Table Footer */}
       <div className="px-4 py-3 border-t border-gray-800 bg-gray-900/30">
-        <p className="text-xs text-gray-400">
+        <p className="text-sm text-gray-400">
           Showing {sortedAndFilteredIssues.length} of {issues.length} issues
         </p>
       </div>

@@ -92,21 +92,21 @@ export default function Home() {
         )}
 
         {analysisResult && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <h1 className="text-2xl font-bold text-gray-900">Analysis Results</h1>
-              <button
-                onClick={handleNewAnalysis}
-                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 text-sm font-medium"
-              >
-                Analyze Another Repository
-              </button>
-            </div>
+  <div className="space-y-6">
+    <div className="flex justify-between items-center">
+      <h1 className="text-2xl font-bold text-white">Analysis Results</h1>
+      <button
+        onClick={handleNewAnalysis}
+        className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 text-sm font-medium"
+      >
+        Analyze Another Repository
+      </button>
+    </div>
 
-            <AnalysisSummary data={analysisResult} />
-            <IssuesTable issues={analysisResult.issues} />
-          </div>
-        )}
+    <AnalysisSummary data={analysisResult} />
+    <IssuesTable issues={analysisResult.issues} />
+  </div>
+)}
       </div>
     </div>
   );
