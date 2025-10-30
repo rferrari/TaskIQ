@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
-import { analyzeIssueWithAI } from '@/lib/ai-analysis';
+import { aiService } from '@/lib/ai-analysis';
 import { AnalysisResult } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -11,22 +11,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Repository URL is required' }, { status: 400 });
     }
 
-    // Extract repo info from URL
     const repoInfo = extractRepoInfo(repoUrl);
     if (!repoInfo) {
       return NextResponse.json({ error: 'Invalid GitHub repository URL' }, { status: 400 });
     }
 
-    // Fetch issues from GitHub
+    console.log(`🔍 Fetching issues from ${repoInfo.owner}/${repoInfo.repo}`);
     const issues = await fetchGitHubIssues(repoInfo.owner, repoInfo.repo);
     
     if (issues.length === 0) {
       return NextResponse.json({ error: 'No open issues found in this repository' }, { status: 404 });
     }
 
-    // Analyze each issue with AI
-    const analysisPromises = issues.map(async (issue) => {
-      const analysis = await analyzeIssueWithAI(issue);
+    console.log(`Analyzing ${issues.length} issues with AI...`);
+    
+    // Analyze issues with AI (with fallback models)
+    const analysisPromises = issues.map(async (issue, index) => {
+      // Add small delay to avoid rate limits
+      if (index > 0) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      const analysis = await aiService.analyzeIssue(issue);
       return {
         ...issue,
         ...analysis
@@ -43,6 +49,7 @@ export async function POST(request: NextRequest) {
       summary
     };
 
+    console.log(`✅ Analysis complete for ${repoInfo.owner}/${repoInfo.repo}`);
     return NextResponse.json(result);
   } catch (error) {
     console.error('Analysis error:', error);
@@ -60,13 +67,9 @@ function calculateSummary(issues: any[]) {
   let totalBudgetMax = 0;
 
   issues.forEach(issue => {
-    // Count complexity distribution
     complexityDistribution[issue.complexity] = (complexityDistribution[issue.complexity] || 0) + 1;
-    
-    // Count category breakdown
     categoryBreakdown[issue.category] = (categoryBreakdown[issue.category] || 0) + 1;
     
-    // Calculate total budget range
     const costMatch = issue.estimated_cost.match(/\$(\d+)-?\$?(\d+)?/);
     if (costMatch) {
       totalBudgetMin += parseInt(costMatch[1]);
