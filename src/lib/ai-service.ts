@@ -46,12 +46,11 @@ console.log(`   Strategy: Small → Regular → Large with Summarization`);
 console.log(`   Cost Optimization: ${config.features.enableCostOptimization ? 'Enabled' : 'Disabled'}`);
 
 /** --- UTILITIES --- **/
- function getModelConfigById(modelId: string): ModelConfig | null {
-    // Check all configured models
-    const models = [config.ai.smallModel, config.ai.regularModel, config.ai.largeModel];
-    return models.find(model => model.id === modelId) || null;
-  }
-
+function getModelConfigById(modelId: string): ModelConfig | null {
+  // Check all configured models
+  const models = [config.ai.smallModel, config.ai.regularModel, config.ai.largeModel];
+  return models.find(model => model.id === modelId) || null;
+}
 
 function parseAIResponse(raw: string): any {
   console.log(`🔄 Parsing AI response...`);
@@ -379,15 +378,22 @@ function extractKeySections(text: string, maxChars: number): string {
 }
 
 /** --- STAGE 2: ANALYSIS --- **/
-export async function analyzeWithModel(model: string, issue: GitHubIssue, summary: string): Promise<AIModelResponse> {
-  console.log(`🔍 Stage 2: Analyzing with ${model}`);
+export async function analyzeWithModel(
+  model: string, 
+  issue: GitHubIssue, 
+  summary: string,
+  abortSignal?: AbortSignal
+): Promise<AIModelResponse> {
+  
+  // Check for abort signal
+  if (abortSignal?.aborted) {
+    throw new DOMException('Analysis was aborted', 'AbortError');
+  }
 
-  // Get model config by ID instead of string matching
   const modelConfig = getModelConfigById(model) || getModelConfig('small');
   
   const userPrompt = `Please analyze this GitHub issue summary and provide a cost estimation:\n\n${summary}`;
 
-  // Use proper OpenAI message types
   const messages: OpenAIMessage[] = [
     {
       role: "system",
@@ -407,13 +413,18 @@ export async function analyzeWithModel(model: string, issue: GitHubIssue, summar
     console.log(`✅ TPM check passed for ${model}, proceeding with analysis...`);
 
     const startTime = Date.now();
+    
+    // Pass abort signal to OpenAI request
     const completion = await openai.chat.completions.create({
       model,
       messages,
       temperature: 0.1,
       max_tokens: config.ai.analysisMaxTokens,
       response_format: { type: "json_object" }
+    }, {
+      signal: abortSignal // This allows the request to be cancelled
     });
+    
     const endTime = Date.now();
 
     console.log(`⏱️ Analysis with ${model} took: ${endTime - startTime}ms`);
@@ -423,6 +434,12 @@ export async function analyzeWithModel(model: string, issue: GitHubIssue, summar
 
     return validateAIResponse(JSON.parse(response));
   } catch (error: any) {
+    // Check if this was an abort error
+    if (error.name === 'AbortError' || abortSignal?.aborted) {
+      console.log(`🛑 Analysis with ${model} was aborted`);
+      throw error;
+    }
+    
     console.error(`❌ Analysis failed with ${model}:`, error.message);
     
     // If it's a TPM error, wait and retry once
