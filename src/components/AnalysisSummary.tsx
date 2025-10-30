@@ -28,7 +28,7 @@ export function AnalysisSummary({ data }: AnalysisSummaryProps) {
       <StatCard
         title="High Complexity"
         value={summary.complexity_distribution[5] || 0}
-        description="Issues with complexity 5"
+        description="Very Complex Issues"
       />
     </div>
   );
