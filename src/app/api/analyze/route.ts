@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
-import { aiService } from '@/lib/ai-analysis';
+import { analyzeIssueWithAI, mockAnalyzeIssue } from '@/lib/ai-service';
 import { AnalysisResult } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -23,16 +23,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No open issues found in this repository' }, { status: 404 });
     }
 
-    console.log(`Analyzing ${issues.length} issues with AI...`);
+    console.log(`📊 Analyzing ${issues.length} issues...`);
     
-    // Analyze issues with AI (with fallback models)
+    // Use mock analysis if no API key is configured
+    const shouldUseMock = !process.env.OPENAI_API_KEY;
+    if (shouldUseMock) {
+      console.warn('⚠️ No OPENAI_API_KEY found, using mock analysis');
+    }
+
+    // Analyze issues
     const analysisPromises = issues.map(async (issue, index) => {
       // Add small delay to avoid rate limits
-      if (index > 0) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      if (index > 0 && !shouldUseMock) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
       
-      const analysis = await aiService.analyzeIssue(issue);
+      const analysis = shouldUseMock 
+        ? mockAnalyzeIssue(issue)
+        : await analyzeIssueWithAI(issue);
+      
       return {
         ...issue,
         ...analysis

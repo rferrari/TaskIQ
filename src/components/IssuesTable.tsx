@@ -150,7 +150,7 @@ export function IssuesTable({ issues }: IssuesTableProps) {
                 Type
               </th>
               <th scope="col" className="py-3 px-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-1/12">
-                Conf
+                Confidence
               </th>
             </tr>
           </thead>
