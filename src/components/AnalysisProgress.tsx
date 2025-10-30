@@ -15,7 +15,7 @@ export function AnalysisProgress({ progress, repoUrl }: AnalysisProgressProps) {
     switch (status) {
       case 'pending': return '⏳';
       case 'summarizing': return '📝';
-      case 'analyzing': return '🤖';
+      case 'analyzing': return '🧠';
       case 'complete': return '✅';
       case 'error': return '❌';
       default: return '⚪';

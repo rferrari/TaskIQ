@@ -1,4 +1,4 @@
-// src/app/page.tsx - Fixed version
+// src/app/page.tsx - Refactored version
 'use client';
 
 import { useState, useRef } from 'react';
@@ -17,6 +17,7 @@ export default function Home() {
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressType | null>(null);
   const [currentRepoUrl, setCurrentRepoUrl] = useState<string>('');
   const [batchState, setBatchState] = useState<BatchState | null>(null);
+  const [isProcessingComplete, setIsProcessingComplete] = useState(false);
   
   // Refs to track processing and abort controller
   const isProcessingRef = useRef(false);
@@ -35,6 +36,7 @@ export default function Home() {
     setAnalysisResult(null);
     setAnalysisProgress(null);
     setBatchState(null);
+    setIsProcessingComplete(false);
     setCurrentRepoUrl(repoUrl);
     isProcessingRef.current = true;
     accumulatedResultsRef.current = [];
@@ -78,12 +80,12 @@ export default function Home() {
       console.error('Analysis error:', err);
       setError(err instanceof Error ? err.message : 'Analysis failed');
       setIsLoading(false);
+      setIsProcessingComplete(false);
       isProcessingRef.current = false;
     }
   };
 
   const handleSSEStream = async (response: Response) => {
-    // Add proper null check here
     if (!response.body) {
       throw new Error('No response body available for streaming');
     }
@@ -128,8 +130,10 @@ export default function Home() {
                   }
                   
                 } else if (data.type === 'complete') {
+                  // Final completion - show results
                   setAnalysisResult(data.data);
                   setIsLoading(false);
+                  setIsProcessingComplete(true);
                   isProcessingRef.current = false;
                   
                   if (batchState) {
@@ -170,7 +174,7 @@ export default function Home() {
                     processedIssues: data.data.processedIssues
                   } : null);
                 } else if (data.type === 'partial_result') {
-                  // Update with partial results
+                  // Update with partial results but keep processing state
                   setAnalysisResult(data.data);
                 }
               } catch (parseError) {
@@ -187,6 +191,7 @@ export default function Home() {
           setError('Analysis stream was interrupted');
         }
         setIsLoading(false);
+        setIsProcessingComplete(false);
         isProcessingRef.current = false;
       } finally {
         try {
@@ -210,6 +215,7 @@ export default function Home() {
     setAnalysisProgress(null);
     setBatchState(null);
     setError(null);
+    setIsProcessingComplete(false);
     setCurrentRepoUrl('');
     isProcessingRef.current = false;
     abortControllerRef.current = null;
@@ -217,10 +223,9 @@ export default function Home() {
     accumulatedResultsRef.current = [];
   };
 
-  // Enhanced progress display that shows batch progress
   const renderContent = () => {
-    // Show batch progress if we're in batch mode and no individual progress
-    if (batchState && !analysisProgress && !analysisResult) {
+    // Show batch progress if we're in batch mode and processing is ongoing
+    if (batchState && !isProcessingComplete && !analysisProgress) {
       return (
         <div className="max-w-4xl mx-auto">
           <div className="glass-card rounded-2xl p-8">
@@ -254,6 +259,15 @@ export default function Home() {
                   Processing batch {batchState.currentBatch} of {batchState.totalBatches}...
                   {batchState.completedBatches > 0 && ` (${Math.round((batchState.completedBatches / batchState.totalBatches) * 100)}% complete)`}
                 </p>
+                
+                {/* Show partial results preview if we have them */}
+                {analysisResult && (
+                  <div className="mt-4 p-3 bg-blue-900/20 border border-blue-700 rounded-lg">
+                    <p className="text-blue-300 text-sm">
+                      ✅ <strong>{analysisResult.issues.length} issues analyzed so far</strong> - processing remaining issues...
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -261,13 +275,13 @@ export default function Home() {
       );
     }
 
-    // Show regular progress for non-batch analysis
-    if (analysisProgress && !analysisResult) {
+    // Show regular progress for non-batch analysis (when processing is ongoing)
+    if (analysisProgress && !isProcessingComplete) {
       return <AnalysisProgress progress={analysisProgress} repoUrl={currentRepoUrl} />;
     }
 
-    // Show results
-    if (analysisResult) {
+    // Show final results ONLY when processing is complete
+    if (analysisResult && isProcessingComplete) {
       return (
         <div className="space-y-6">
           <div className="flex justify-between items-center">
@@ -292,8 +306,8 @@ export default function Home() {
       );
     }
 
-    // Show loading state
-    if (isLoading && !analysisProgress) {
+    // Show loading state (initial phase)
+    if (isLoading && !analysisProgress && !isProcessingComplete) {
       return (
         <div className="max-w-4xl mx-auto">
           <div className="glass-card rounded-2xl p-8">

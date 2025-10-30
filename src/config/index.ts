@@ -2,6 +2,7 @@
 // Central configuration for the entire application
 export interface ModelConfig {
   id: string;
+  type: 'small' | 'regular' | 'large';
   maxContext: number;
   maxCompletion: number;
   priceInput: number;
@@ -40,7 +41,8 @@ export interface AppConfig {
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
   small: {
     id: 'llama-3.1-8b-instant',
-    maxContext: 131072,
+    type: 'small',
+    maxContext: 6000,
     maxCompletion: 131072,
     priceInput: 0.05,
     priceOutput: 0.08,
@@ -50,7 +52,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   regular: {
     id: 'openai/gpt-oss-20b',
-    maxContext: 131072,
+    type: 'regular',
+    maxContext: 6000,
     maxCompletion: 65536,
     priceInput: 0.075,
     priceOutput: 0.30,
@@ -60,7 +63,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   large: {
     id: 'llama-3.3-70b-versatile',
-    maxContext: 131072,
+    type: 'large',
+    maxContext: 6000,
     maxCompletion: 32768,
     priceInput: 0.59,
     priceOutput: 0.79,

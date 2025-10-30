@@ -1,5 +1,10 @@
 import { OpenAI } from 'openai';
 import { GitHubIssue } from '@/types';
+import { tpmLimiter } from '@/lib/rate-limiter';
+
+// Use proper OpenAI message types
+type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
 import { 
   config, 
   getModelConfig, 
@@ -8,7 +13,8 @@ import {
   getOpenAIConfig, 
   validateEnvironment, 
   getSummarizationSystemPrompt, 
-  getAnalysisSystemPrompt 
+  getAnalysisSystemPrompt, 
+  ModelConfig
 } from '@/config';
 
 interface AIModelResponse {
@@ -40,6 +46,12 @@ console.log(`   Strategy: Small → Regular → Large with Summarization`);
 console.log(`   Cost Optimization: ${config.features.enableCostOptimization ? 'Enabled' : 'Disabled'}`);
 
 /** --- UTILITIES --- **/
+ function getModelConfigById(modelId: string): ModelConfig | null {
+    // Check all configured models
+    const models = [config.ai.smallModel, config.ai.regularModel, config.ai.largeModel];
+    return models.find(model => model.id === modelId) || null;
+  }
+
 
 function parseAIResponse(raw: string): any {
   console.log(`🔄 Parsing AI response...`);
@@ -168,53 +180,54 @@ function estimateTokens(text: string): number {
 }
 
 export function selectAnalysisStrategy(issue: GitHubIssue): {
-  model: string;
+  model: string; // Now returns the actual model ID
   needsSummarization: boolean;
   estimatedCost: number;
-  modelConfig: any;
+  modelConfig: ModelConfig;
 } {
   const issueContent = `${issue.title} ${issue.body || ''}`;
   const totalTokens = estimateTokens(issueContent);
   
-  const smallModel = getModelConfig('small');
-  const regularModel = getModelConfig('regular');
-  const largeModel = getModelConfig('large');
+  console.log(`📊 Issue #${issue.number} token estimate: ${totalTokens}`);
 
-  // Check if issue is too large to process
-  if (totalTokens > config.ai.maxIssueTokens) {
-    console.warn(`⚠️ Issue #${issue.number} exceeds maximum token limit (${totalTokens} > ${config.ai.maxIssueTokens})`);
-    // Fall back to small model with forced summarization
+  // Enforce 30K token limit
+  if (totalTokens > 30000) {
+    console.log(`⚠️ Issue #${issue.number} exceeds 30K token limit, forcing summarization`);
+    const smallModel = getModelConfig('small');
     return {
-      model: smallModel.id,
+      model: smallModel.id, // Return actual model ID
       needsSummarization: true,
-      estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
+      estimatedCost: estimateAnalysisCost(30000, smallModel),
       modelConfig: smallModel
     };
   }
 
-  // If it fits in small model with room for analysis, use it
-  if (totalTokens < smallModel.maxContext * 0.7) {
+  // Normal strategy selection
+  const smallModel = getModelConfig('small');
+  const regularModel = getModelConfig('regular');
+  const largeModel = getModelConfig('large');
+
+  if (totalTokens < smallModel.maxContext * 0.6) {
     return {
-      model: smallModel.id,
+      model: smallModel.id, // Return actual model ID
       needsSummarization: false,
       estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
       modelConfig: smallModel
     };
   }
 
-  // If it fits in regular model with room for analysis, use it
-  if (totalTokens < regularModel.maxContext * 0.7) {
+  if (totalTokens < regularModel.maxContext * 0.6) {
     return {
-      model: regularModel.id,
+      model: regularModel.id, // Return actual model ID
       needsSummarization: false,
       estimatedCost: estimateAnalysisCost(totalTokens, regularModel),
       modelConfig: regularModel
     };
   }
 
-  // Large issues need summarization first with large model
+  // Large issues need summarization
   return {
-    model: largeModel.id,
+    model: largeModel.id, // Return actual model ID
     needsSummarization: true,
     estimatedCost: estimateAnalysisCost(totalTokens, largeModel),
     modelConfig: largeModel
@@ -239,7 +252,6 @@ DESCRIPTION: ${issue.body || 'No description provided'}
   const currentTokens = estimateTokens(issueContent);
   const targetTokens = config.ai.summaryTargetTokens;
   
-  // If content is already within limits, use as-is
   if (currentTokens <= targetTokens) {
     console.log(`✅ Issue #${issue.number} fits target (${currentTokens} tokens)`);
     return issueContent;
@@ -247,22 +259,24 @@ DESCRIPTION: ${issue.body || 'No description provided'}
 
   console.log(`🔄 Summarizing issue #${issue.number} from ${currentTokens} to ~${targetTokens} tokens`);
 
-  // Apply smart trimming before sending to AI
-  const trimmedContent = smartTrimIssueContent(issueContent, targetTokens * 3); // Convert to chars
-  
+  const trimmedContent = smartTrimIssueContent(issueContent, targetTokens * 3);
   const userPrompt = `Please create a concise technical summary of this GitHub issue for cost estimation analysis:\n\n${trimmedContent}`;
 
   try {
     const smallModel = getModelConfig('small');
+    
+    // Check TPM using model ID
+    const messages: OpenAIMessage[] = [
+      { role: "system", content: getSummarizationSystemPrompt() },
+      { role: "user", content: userPrompt }
+    ];
+    
+    const estimatedTokens = tpmLimiter.estimateRequestTokens(messages, smallModel);
+    await tpmLimiter.checkAndWait(smallModel.id, estimatedTokens);
+
     const completion = await openai.chat.completions.create({
       model: smallModel.id,
-      messages: [
-        {
-          role: "system",
-          content: getSummarizationSystemPrompt()
-        },
-        { role: "user", content: userPrompt }
-      ],
+      messages,
       temperature: 0.1,
       max_tokens: targetTokens,
     });
@@ -276,7 +290,6 @@ DESCRIPTION: ${issue.body || 'No description provided'}
     return summary;
   } catch (error) {
     console.error(`❌ Summarization failed for issue #${issue.number}:`, error);
-    // Fallback: return the smart-trimmed content
     return trimmedContent;
   }
 }
@@ -366,24 +379,37 @@ function extractKeySections(text: string, maxChars: number): string {
 }
 
 /** --- STAGE 2: ANALYSIS --- **/
-
 export async function analyzeWithModel(model: string, issue: GitHubIssue, summary: string): Promise<AIModelResponse> {
   console.log(`🔍 Stage 2: Analyzing with ${model}`);
 
-  // Simple user prompt - system prompt contains all analysis parameters
+  // Get model config by ID instead of string matching
+  const modelConfig = getModelConfigById(model) || getModelConfig('small');
+  
   const userPrompt = `Please analyze this GitHub issue summary and provide a cost estimation:\n\n${summary}`;
 
+  // Use proper OpenAI message types
+  const messages: OpenAIMessage[] = [
+    {
+      role: "system",
+      content: getAnalysisSystemPrompt()
+    },
+    { 
+      role: "user", 
+      content: userPrompt 
+    }
+  ];
+
   try {
+    // Check TPM limits using model ID
+    const estimatedTokens = tpmLimiter.estimateRequestTokens(messages, modelConfig);
+    await tpmLimiter.checkAndWait(model, estimatedTokens);
+
+    console.log(`✅ TPM check passed for ${model}, proceeding with analysis...`);
+
     const startTime = Date.now();
     const completion = await openai.chat.completions.create({
       model,
-      messages: [
-        {
-          role: "system",
-          content: getAnalysisSystemPrompt() // Now dynamically includes current cost ranges
-        },
-        { role: "user", content: userPrompt }
-      ],
+      messages,
       temperature: 0.1,
       max_tokens: config.ai.analysisMaxTokens,
       response_format: { type: "json_object" }
@@ -395,14 +421,44 @@ export async function analyzeWithModel(model: string, issue: GitHubIssue, summar
     const response = completion.choices[0]?.message?.content;
     if (!response) throw new Error('No analysis response');
 
-    console.log(`🤖 ${model} analysis response:`, response);
-
     return validateAIResponse(JSON.parse(response));
   } catch (error: any) {
     console.error(`❌ Analysis failed with ${model}:`, error.message);
+    
+    // If it's a TPM error, wait and retry once
+    if (error.status === 429 || error.message.includes('TPM') || error.message.includes('rate limit')) {
+      console.log(`🔄 TPM limit hit, waiting 65 seconds and retrying...`);
+      await new Promise(resolve => setTimeout(resolve, 65000));
+      
+      // Reset the limiter for this model since we're waiting
+      tpmLimiter.reset(model);
+      
+      console.log(`🔄 Retrying analysis with ${model} after TPM wait...`);
+      return await analyzeWithModel(model, issue, summary);
+    }
+    
+    // If it's a size-related error, try with a smaller model using config
+    if (error.status === 413 || error.message.includes('too large') || error.message.includes('token')) {
+      console.log(`🔄 Size limit hit with ${model}, trying smaller model...`);
+      
+      const currentModelConfig = getModelConfigById(model);
+      if (currentModelConfig) {
+        if (currentModelConfig.type === 'large') {
+          const fallbackModel = getModelConfig('regular').id;
+          console.log(`🔄 Falling back from large to regular: ${fallbackModel}`);
+          return await analyzeWithModel(fallbackModel, issue, summary);
+        } else if (currentModelConfig.type === 'regular') {
+          const fallbackModel = getModelConfig('small').id;
+          console.log(`🔄 Falling back from regular to small: ${fallbackModel}`);
+          return await analyzeWithModel(fallbackModel, issue, summary);
+        }
+      }
+    }
+    
     throw error;
   }
 }
+
 
 /** --- MAIN PIPELINE --- **/
 
