@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Issue Estimator - AI-Powered GitHub Analysis',
+  title: 'TaskIQ - AI-Powered GitHub Analysis',
   description: 'Transform GitHub issues into actionable tasks with AI-powered cost estimation',
 };
 
@@ -23,7 +23,7 @@ export default function RootLayout({
                   <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
                     <span className="text-white font-bold text-sm">📊</span>
                   </div>
-                  <h1 className="text-xl font-bold text-white">Issue Estimator</h1>
+                  <h1 className="text-xl font-bold text-white">TaskIQ</h1>
                 </div>
                 <div className="text-gray-400 text-sm">
                   AI-Powered Analysis
