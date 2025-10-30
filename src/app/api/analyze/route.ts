@@ -1,3 +1,4 @@
+// src/app/api/analyze/route.ts
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store'; // ✅ ensure no caching
@@ -45,7 +46,7 @@ function estimateTokens(text: string): number {
 
 export async function POST(request: NextRequest) {
   try {
-    const { repoUrl } = await request.json();
+    const { repoUrl, batchSize = 20, batchIndex = 0, totalBatches = 0 } = await request.json();
 
     if (!repoUrl) {
       return NextResponse.json({ error: 'Repository URL is required' }, { status: 400 });
@@ -63,15 +64,68 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No open issues found in this repository' }, { status: 404 });
     }
 
+    // BATCHING DECISION LOGIC
+    const BATCH_THRESHOLD = 10; // If more than 10 issues, use batching
+    const shouldUseBatching = issues.length > BATCH_THRESHOLD;
+
+    if (shouldUseBatching && batchIndex === 0) {
+      // First batch request - return batching info to client
+      const batches = Math.ceil(issues.length / batchSize);
+      
+      console.log(`🔄 Large repository detected (${issues.length} issues). Using batch processing: ${batches} batches`);
+      
+      return NextResponse.json({
+        requiresBatching: true,
+        totalBatches: batches,
+        totalIssues: issues.length,
+        batchSize,
+        message: `Large repository detected. Will process in ${batches} batches.`
+      });
+    }
+
+    // If we get here, either:
+    // 1. It's a small repo (no batching needed)
+    // 2. It's a batch request (batchIndex > 0)
+    
+    if (shouldUseBatching && batchIndex > 0) {
+      // This should be handled by the batch endpoint, but if called here, redirect logic
+      console.log(`🔄 Batch request detected for batch ${batchIndex}`);
+      
+      // Calculate which issues to process in this batch
+      const startIndex = batchIndex * batchSize;
+      const endIndex = Math.min(startIndex + batchSize, issues.length);
+      const batchIssues = issues.slice(startIndex, endIndex);
+      
+      console.log(`📦 Processing batch ${batchIndex}: issues ${startIndex + 1}-${endIndex} of ${issues.length}`);
+
     // Use mock analysis if no API key is configured
     const shouldUseMock = !process.env.OPENAI_API_KEY;
     if (shouldUseMock) {
       console.warn('⚠️ No OPENAI_API_KEY found, using mock analysis');
     }
 
-    console.log('📊 Starting SSE analysis for', issues.length, 'issues');
+      // Analyze this specific batch
+      const analyzedBatchIssues = await analyzeBatchIssues(batchIssues, shouldUseMock);
 
-    // Create progress tracker
+      return NextResponse.json({
+        data: {
+          issues: analyzedBatchIssues,
+          summary: calculateSummary(analyzedBatchIssues)
+        },
+        batchIndex,
+        isLastBatch: endIndex >= issues.length
+      });
+    }
+
+    // SMALL REPO - Process all issues at once (original logic)
+    console.log(`📊 Small repository (${issues.length} issues), processing in single batch`);
+    
+    const shouldUseMock = !process.env.OPENAI_API_KEY;
+    if (shouldUseMock) {
+      console.warn('⚠️ No OPENAI_API_KEY found, using mock analysis');
+    }
+
+    // For small repos, use SSE streaming as before
     const progress: AnalysisProgressType = {
       totalIssues: issues.length,
       analyzedIssues: 0,
@@ -141,7 +195,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(
@@ -151,6 +204,59 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// Batch analysis function (without SSE)
+async function analyzeBatchIssues(issues: any[], shouldUseMock: boolean): Promise<any[]> {
+  const analyzedIssues: any[] = [];
+  
+  for (let i = 0; i < issues.length; i++) {
+    const issue = issues[i];
+    
+    try {
+      let analysis;
+      
+      if (shouldUseMock) {
+        // Use mock analysis
+        analysis = mockAnalyzeIssue(issue);
+        // Simulate some processing time
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        // Real AI analysis with multi-stage pipeline
+        const strategy = selectAnalysisStrategy(issue);
+        let analysisContent = '';
+
+        // Stage 1: Summarization (if needed)
+        if (strategy.needsSummarization) {
+          analysisContent = await createIssueSummary(issue);
+        } else {
+          analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
+        }
+
+        // Stage 2: Analysis
+        analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+      }
+      
+      // Store result
+      analyzedIssues.push({ ...issue, ...analysis });
+
+    } catch (error) {
+      console.error(`Error analyzing issue #${issue.number}:`, error);
+      
+      // Use fallback analysis
+      const fallbackAnalysis = getFallbackAnalysis(issue);
+      analyzedIssues.push({ ...issue, ...fallbackAnalysis });
+    }
+
+    // Add small delay between issues
+    if (i < issues.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
+  console.log(`✅ Batch analysis complete: ${analyzedIssues.length} issues processed`);
+  return analyzedIssues;
+}
+
+// Keep your existing analyzeWithProgress function for small repos
 async function analyzeWithProgress(
   issues: any[], 
   progress: AnalysisProgressType, 

@@ -339,3 +339,11 @@ TaskIQ introduces an **AI Reasoning Modal** — allowing full visibility into th
 ### ✨ **TaskIQ**
 
 *Transforming GitHub issues into actionable, cost-optimized insights powered by AI.*
+
+
+### Future Enhancements
+
+- [ ] Add retry logic for failed batches
+- [ ] Implement client-side persistence so users can refresh without losing progress
+- [ ] Add batch size configuration based on repository size
+- [ ] Server-Side queue systems (like Redis) for very large repos

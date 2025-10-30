@@ -1,3 +1,4 @@
+// src/types/index.ts
 export interface GitHubIssue {
   id: number;
   number: number;
@@ -24,15 +25,30 @@ export interface AnalyzedIssue extends GitHubIssue {
   ai_analysis: string;
 }
 
-export interface AnalysisResult {
-  issues: AnalyzedIssue[];
-  summary: {
+export interface AnalysisSummaryType {
     total_issues: number;
     total_budget_min: number;
     total_budget_max: number;
     complexity_distribution: Record<number, number>;
     category_breakdown: Record<string, number>;
     average_confidence: number;
+  analyzedIssues?: number;
+  highPriorityIssues?: number;
+  completedAt?: string;
+  batchProgress?: {
+    current: number;
+    total: number;
+    isComplete: boolean;
+  };
+}
+
+export interface AnalysisResult {
+  issues: AnalyzedIssue[];
+  summary: AnalysisSummaryType;
+  metadata?: {
+    repoUrl: string;
+    analyzedAt: string;
+    analysisType: string;
   };
 }
 
@@ -45,7 +61,7 @@ export interface AnalysisProgressType {
       title: string;
       status: 'pending' | 'summarizing' | 'analyzing' | 'complete' | 'error';
       currentStage?: string;
-      progress: number; // 0-100
+      progress: number;
       model?: string;
       summaryTokens?: number;
       estimatedTimeRemaining?: string;
@@ -53,4 +69,27 @@ export interface AnalysisProgressType {
   };
   estimatedTotalTime: number;
   startTime: number;
+  // For batch progress display
+  current?: number;
+  total?: number;
+  message?: string;
+}
+
+export interface BatchState {
+  currentBatch: number;
+  totalBatches: number;
+  completedBatches: number;
+  processedIssues: number;
+  totalIssues: number;
+  isComplete: boolean;
+}
+
+// Add this interface for batch responses
+export interface BatchResponse {
+  data: {
+    issues: AnalyzedIssue[];
+    summary?: Partial<AnalysisSummaryType>;
+  };
+  batchIndex: number;
+  isLastBatch: boolean;
 }

@@ -1,3 +1,4 @@
+// src/app/page.tsx
 'use client';
 
 import { useState, useRef } from 'react';
@@ -6,7 +7,7 @@ import { AnalysisSummary } from '@/components/AnalysisSummary';
 import { IssuesTable } from '@/components/IssuesTable';
 import { AnalysisProgress } from '@/components/AnalysisProgress';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { AnalysisResult, AnalysisProgressType } from '@/types';
+import { AnalysisResult, AnalysisProgressType, BatchState, AnalyzedIssue, AnalysisSummaryType, BatchResponse } from '@/types';
 
 export default function Home() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -14,11 +15,13 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressType | null>(null);
   const [currentRepoUrl, setCurrentRepoUrl] = useState<string>('');
+  const [batchState, setBatchState] = useState<BatchState | null>(null);
   
   // Refs to track processing and abort controller
   const isProcessingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const responseRef = useRef<Response | null>(null);
+  const accumulatedResultsRef = useRef<AnalyzedIssue[]>([]);
 
   const handleAnalyze = async (repoUrl: string) => {
     // Prevent multiple simultaneous analyses
@@ -31,8 +34,10 @@ export default function Home() {
     setError(null);
     setAnalysisResult(null);
     setAnalysisProgress(null);
+    setBatchState(null);
     setCurrentRepoUrl(repoUrl);
     isProcessingRef.current = true;
+    accumulatedResultsRef.current = [];
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
@@ -43,7 +48,12 @@ export default function Home() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ repoUrl }),
+        body: JSON.stringify({ 
+          repoUrl,
+          batchSize: 20, // Process 20 issues per batch
+          batchIndex: 0, // Start with first batch
+          totalBatches: 0 // Server will calculate this
+        }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -54,118 +64,238 @@ export default function Home() {
         throw new Error(errorData.error || `Failed to start analysis: ${response.status}`);
       }
 
-      if (!response.body) {
-        throw new Error('No response body received');
+      const result = await response.json();
+      
+      if (result.requiresBatching) {
+        // Start batch processing
+        await processInBatches(repoUrl, result.totalBatches, result.totalIssues);
+      } else {
+        // Single batch processing for small repos
+        setAnalysisResult(result.data);
+        setIsLoading(false);
+        isProcessingRef.current = false;
       }
 
-      // Handle SSE stream
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      const processStream = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            
-            if (done) {
-              console.log('Stream completed normally');
-              break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            
-            // Keep the last incomplete line in the buffer
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  console.log('Received SSE data:', data.type);
-                  
-                  if (data.type === 'progress') {
-                    setAnalysisProgress(data.data);
-                  } else if (data.type === 'complete') {
-                    setAnalysisResult(data.data);
-                    setIsLoading(false);
-                    isProcessingRef.current = false;
-
-                    // ✅ FIX: Complete stream cleanup as recommended
-                    console.log('Analysis complete, performing complete stream cleanup...');
-                    
-                    // 1. Cancel the reader
-                    await reader.cancel();
-                    console.log('✅ Reader cancelled');
-                    
-                    // 2. Flush TextDecoder buffer
-                    decoder.decode(); // Flush any remaining bytes
-                    console.log('✅ TextDecoder flushed');
-                    
-                    // 3. Release the reader lock
-                    reader.releaseLock();
-                    console.log('✅ Reader lock released');
-                    
-                    // 4. Close the response body if available
-                    if (responseRef.current?.body) {
-                      try {
-                        await responseRef.current.body.cancel();
-                        console.log('✅ Response body cancelled');
-                      } catch (e) {
-                        console.log('Response body already closed:', e);
-                      }
-                    }
-                    
-                    console.log('✅ Stream fully closed');
-                    return; // Exit when complete
-                  }
-                } catch (parseError) {
-                  console.error('Error parsing SSE data:', parseError, 'Line:', line);
-                }
-              }
-            }
-          }
-        } catch (streamError: any) {
-          // Check if this was an abort error
-          if (streamError.name === 'AbortError') {
-            console.log('Stream reading was aborted');
-          } else {
-            console.error('Stream error:', streamError);
-            setError('Analysis stream was interrupted');
-          }
-          setIsLoading(false);
-          isProcessingRef.current = false;
-        } finally {
-          // ✅ FIX: Always release the lock and clean up
-          try {
-            reader.releaseLock();
-            console.log('Reader lock released in finally block');
-          } catch (e) {
-            console.log('Reader lock already released:', e);
-          }
-        }
-      };
-
-      // Start processing the stream without blocking
-      processStream();
-
     } catch (err: any) {
-      // Check if this was an abort error
       if (err.name === 'AbortError') {
         console.log('Request was aborted');
         return;
       }
-      
+
       console.error('Analysis error:', err);
       setError(err instanceof Error ? err.message : 'Analysis failed');
       setIsLoading(false);
       isProcessingRef.current = false;
     }
   };
+            
+  const processInBatches = async (repoUrl: string, totalBatches: number, totalIssues: number) => {
+    console.log(`Starting batch processing: ${totalBatches} batches, ${totalIssues} total issues`);
+    
+    setBatchState({
+      currentBatch: 0,
+      totalBatches,
+      completedBatches: 0,
+      processedIssues: 0,
+      totalIssues,
+      isComplete: false
+    });
+
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      if (!isProcessingRef.current) {
+        console.log('Batch processing interrupted');
+              break;
+            }
+
+                try {
+        console.log(`Processing batch ${batchIndex + 1}/${totalBatches}`);
+                  
+        setBatchState(prev => prev ? {
+          ...prev,
+          currentBatch: batchIndex + 1
+        } : null);
+
+        const batchResult = await processSingleBatch(repoUrl, batchIndex, totalBatches);
+                    
+        if (batchResult && batchResult.issues) {
+          // Accumulate results
+          accumulatedResultsRef.current = [
+            ...accumulatedResultsRef.current,
+            ...batchResult.issues
+          ];
+                    
+          // Update progress
+          setBatchState(prev => prev ? {
+            ...prev,
+            completedBatches: batchIndex + 1,
+            processedIssues: accumulatedResultsRef.current.length
+          } : null);
+                    
+          // Show intermediate progress with partial results
+          setAnalysisProgress({
+            totalIssues,
+            analyzedIssues: accumulatedResultsRef.current.length,
+            currentStage: 'analyzing',
+            issues: {},
+            estimatedTotalTime: 0,
+            startTime: Date.now(),
+            current: batchIndex + 1,
+            total: totalBatches,
+            message: `Processed ${batchIndex + 1}/${totalBatches} batches (${accumulatedResultsRef.current.length}/${totalIssues} issues)`
+          });
+                    
+          // Show partial results after each batch
+          if (batchIndex === 0 || (batchIndex + 1) % 5 === 0 || batchIndex === totalBatches - 1) {
+            const partialSummary: AnalysisSummaryType = {
+              total_issues: totalIssues,
+                analyzedIssues: accumulatedResultsRef.current.length,
+                highPriorityIssues: accumulatedResultsRef.current.filter(issue => 
+                issue.complexity >= 7 // Define high priority based on complexity
+                ).length,
+              total_budget_min: accumulatedResultsRef.current.reduce((sum, issue) => {
+                const cost = parseFloat(issue.estimated_cost.replace(/[^0-9.]/g, '')) || 0;
+                return sum + cost * 0.8; // min estimate
+              }, 0),
+              total_budget_max: accumulatedResultsRef.current.reduce((sum, issue) => {
+                const cost = parseFloat(issue.estimated_cost.replace(/[^0-9.]/g, '')) || 0;
+                return sum + cost * 1.2; // max estimate
+              }, 0),
+              complexity_distribution: accumulatedResultsRef.current.reduce((dist, issue) => {
+                dist[issue.complexity] = (dist[issue.complexity] || 0) + 1;
+                return dist;
+              }, {} as Record<number, number>),
+              category_breakdown: accumulatedResultsRef.current.reduce((breakdown, issue) => {
+                breakdown[issue.category] = (breakdown[issue.category] || 0) + 1;
+                return breakdown;
+              }, {} as Record<string, number>),
+              average_confidence: accumulatedResultsRef.current.length > 0 
+                ? accumulatedResultsRef.current.reduce((sum, issue) => sum + issue.confidence, 0) / accumulatedResultsRef.current.length
+                : 0,
+                completedAt: new Date().toISOString(),
+                batchProgress: {
+                  current: batchIndex + 1,
+                  total: totalBatches,
+                  isComplete: false
+                      }
+            };
+
+            setAnalysisResult({
+              issues: accumulatedResultsRef.current,
+              summary: partialSummary,
+              metadata: {
+                repoUrl,
+                analyzedAt: new Date().toISOString(),
+                analysisType: 'batch'
+              }
+            });
+                    }
+                    
+          // Add delay between batches to avoid rate limiting
+          if (batchIndex < totalBatches - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+                  }
+                }
+      } catch (batchError: any) {
+        console.error(`Batch ${batchIndex + 1} failed:`, batchError);
+        
+        if (batchError.name === 'AbortError') {
+          break;
+              }
+        
+        // Continue with next batch even if one fails
+        console.log(`Continuing with next batch after error in batch ${batchIndex + 1}`);
+        continue;
+            }
+          }
+
+    // Finalize results
+    if (isProcessingRef.current && accumulatedResultsRef.current.length > 0) {
+      console.log('Batch processing complete, finalizing results');
+
+      const finalSummary: AnalysisSummaryType = {
+        total_issues: accumulatedResultsRef.current.length,
+          analyzedIssues: accumulatedResultsRef.current.length,
+          highPriorityIssues: accumulatedResultsRef.current.filter(issue => 
+          issue.complexity >= 7
+          ).length,
+        total_budget_min: accumulatedResultsRef.current.reduce((sum, issue) => {
+          const cost = parseFloat(issue.estimated_cost.replace(/[^0-9.]/g, '')) || 0;
+          return sum + cost * 0.8;
+        }, 0),
+        total_budget_max: accumulatedResultsRef.current.reduce((sum, issue) => {
+          const cost = parseFloat(issue.estimated_cost.replace(/[^0-9.]/g, '')) || 0;
+          return sum + cost * 1.2;
+        }, 0),
+        complexity_distribution: accumulatedResultsRef.current.reduce((dist, issue) => {
+          dist[issue.complexity] = (dist[issue.complexity] || 0) + 1;
+          return dist;
+        }, {} as Record<number, number>),
+        category_breakdown: accumulatedResultsRef.current.reduce((breakdown, issue) => {
+          breakdown[issue.category] = (breakdown[issue.category] || 0) + 1;
+          return breakdown;
+        }, {} as Record<string, number>),
+        average_confidence: accumulatedResultsRef.current.reduce((sum, issue) => sum + issue.confidence, 0) / accumulatedResultsRef.current.length,
+          completedAt: new Date().toISOString(),
+          batchProgress: {
+            current: totalBatches,
+            total: totalBatches,
+            isComplete: true
+          }
+      };
+
+      const finalResult: AnalysisResult = {
+        issues: accumulatedResultsRef.current,
+        summary: finalSummary,
+        metadata: {
+          repoUrl,
+          analyzedAt: new Date().toISOString(),
+          analysisType: 'batch'
+        }
+      };
+
+      setAnalysisResult(finalResult);
+      setBatchState(prev => prev ? { ...prev, isComplete: true } : null);
+      }
+      
+      setIsLoading(false);
+      isProcessingRef.current = false;
+  };
+
+  const processSingleBatch = async (repoUrl: string, batchIndex: number, totalBatches: number): Promise<{ issues: AnalyzedIssue[] } | null> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 240000);
+
+    try {
+      const response = await fetch('/api/analyze-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          repoUrl,
+          batchIndex,
+          batchSize: 20,
+          totalBatches
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Batch ${batchIndex + 1} failed: ${response.status}`);
+      }
+
+      const result: BatchResponse = await response.json();
+      return result.data;
+    } catch (error) {
+      console.error(`Error processing batch ${batchIndex + 1}:`, error);
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
   const handleNewAnalysis = () => {
-    // ✅ FIX: Abort any ongoing request when starting new analysis
+    // FIX: Abort any ongoing request when starting new analysis
     if (isProcessingRef.current) {
       console.log('Aborting current analysis for new one');
       abortControllerRef.current?.abort();
@@ -173,27 +303,77 @@ export default function Home() {
     
     setAnalysisResult(null);
     setAnalysisProgress(null);
+    setBatchState(null);
     setError(null);
     setCurrentRepoUrl('');
     isProcessingRef.current = false;
     abortControllerRef.current = null;
     responseRef.current = null;
+    accumulatedResultsRef.current = [];
   };
 
-  // ... rest of your renderContent and return remain the same ...
-  // Determine what to show based on current state
+  // Enhanced progress display that shows batch progress
   const renderContent = () => {
-    // Show progress if we have progress data and no result yet
+    // Show batch progress if we're in batch mode
+    if (batchState && !analysisResult) {
+      return (
+        <div className="max-w-4xl mx-auto">
+          <div className="glass-card rounded-2xl p-8">
+            <div className="text-center">
+              <LoadingSpinner />
+              <h2 className="text-xl font-semibold text-white mt-4">
+                Processing Repository in Batches
+              </h2>
+              <div className="mt-6 space-y-4">
+                <div className="flex justify-between text-sm text-gray-400">
+                  <span>Batch Progress</span>
+                  <span>{batchState.completedBatches}/{batchState.totalBatches}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div 
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(batchState.completedBatches / batchState.totalBatches) * 100}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm text-gray-400">
+                  <span>Issues Processed</span>
+                  <span>{batchState.processedIssues}/{batchState.totalIssues}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div 
+                    className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(batchState.processedIssues / batchState.totalIssues) * 100}%` }}
+                  />
+                </div>
+                <p className="text-gray-400 text-sm mt-4">
+                  Processing batch {batchState.currentBatch} of {batchState.totalBatches}...
+                  {batchState.completedBatches > 0 && ` (${Math.round((batchState.completedBatches / batchState.totalBatches) * 100)}% complete)`}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Show regular progress for non-batch analysis
     if (analysisProgress && !analysisResult) {
       return <AnalysisProgress progress={analysisProgress} repoUrl={currentRepoUrl} />;
     }
 
-    // Show results if we have them
+    // Show results
     if (analysisResult) {
       return (
         <div className="space-y-6">
           <div className="flex justify-between items-center">
+            <div>
             <h1 className="text-2xl font-bold text-white">Analysis Results</h1>
+              {batchState?.isComplete && (
+                <p className="text-green-400 text-sm mt-1">
+                  ✓ Completed in {batchState.totalBatches} batches
+                </p>
+              )}
+            </div>
             <button
               onClick={handleNewAnalysis}
               className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 text-sm font-medium"
