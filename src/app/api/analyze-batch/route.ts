@@ -10,6 +10,8 @@ import { analyzeIssueWithAI, analyzeWithModel,
   createIssueSummary, getFallbackAnalysis, 
   mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
 
+import { calculateSummary } from '@/lib/summary-utils';
+
 export async function POST(request: NextRequest) {
   try {
     const { repoUrl, batchIndex, batchSize = 20, totalBatches } = await request.json();
@@ -50,30 +52,7 @@ export async function POST(request: NextRequest) {
     const analyzedBatchIssues = await analyzeBatchIssues(batchIssues, shouldUseMock);
 
     // Calculate batch-specific summary
-    const complexityDistribution: Record<number, number> = {};
-    const categoryBreakdown: Record<string, number> = {};
-    let totalBudgetMin = 0;
-    let totalBudgetMax = 0;
-
-    analyzedBatchIssues.forEach(issue => {
-      complexityDistribution[issue.complexity] = (complexityDistribution[issue.complexity] || 0) + 1;
-      categoryBreakdown[issue.category] = (categoryBreakdown[issue.category] || 0) + 1;
-      
-      const costMatch = issue.estimated_cost.match(/\$(\d+)-?\$?(\d+)?/);
-      if (costMatch) {
-        totalBudgetMin += parseInt(costMatch[1]);
-        totalBudgetMax += parseInt(costMatch[2] || costMatch[1]);
-      }
-    });
-
-    const batchSummary = {
-      total_issues: analyzedBatchIssues.length,
-      total_budget_min: totalBudgetMin,
-      total_budget_max: totalBudgetMax,
-      complexity_distribution: complexityDistribution,
-      category_breakdown: categoryBreakdown,
-      average_confidence: analyzedBatchIssues.reduce((sum, issue) => sum + issue.confidence, 0) / analyzedBatchIssues.length
-    };
+    const batchSummary = calculateSummary(analyzedBatchIssues);
 
     console.log(`✅ Batch ${batchIndex} complete: ${analyzedBatchIssues.length} issues analyzed`);
 

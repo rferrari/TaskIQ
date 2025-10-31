@@ -6,12 +6,14 @@ import { downloadCSV, generateCSV } from '@/lib/csv-generator';
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 
+import { config } from '@/config';
+
 interface IssuesTableProps {
   issues: AnalyzedIssue[];
 }
 
 export function IssuesTable({ issues }: IssuesTableProps) {
-  const [sortField, setSortField] = useState<'complexity' | 'estimated_cost' | 'confidence'>('complexity');
+  const [sortField, setSortField] = useState<keyof typeof config.ui.tableSortOptions>('complexity');
   const [filterComplexity, setFilterComplexity] = useState<string>('all');
   const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
   const toggleExpanded = (id: number) => {
@@ -19,14 +21,14 @@ export function IssuesTable({ issues }: IssuesTableProps) {
   };
 
   const getComplexityLabel = (complexity: number): string => {
-    const labels = {
+    const labels: { [key: number]: string } = {
       1: 'Trivial',
       2: 'Simple', 
       3: 'Moderate',
       4: 'Complex',
       5: 'Very Complex'
     };
-    return labels[complexity as keyof typeof labels] || 'Unknown';
+    return labels[complexity] || 'Unknown';
   };
 
   const sortedAndFilteredIssues = useMemo(() => {
@@ -97,12 +99,12 @@ export function IssuesTable({ issues }: IssuesTableProps) {
             <select
               id="sort"
               value={sortField}
-              onChange={(e) => setSortField(e.target.value as any)}
+              onChange={(e) => setSortField(e.target.value as keyof typeof config.ui.tableSortOptions)}
               className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-2 px-3 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-sm"
             >
-              <option value="complexity">Complexity</option>
-              <option value="estimated_cost">Cost</option>
-              <option value="confidence">Confidence</option>
+              {Object.entries(config.ui.tableSortOptions).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
           </div>
           
@@ -116,12 +118,9 @@ export function IssuesTable({ issues }: IssuesTableProps) {
               onChange={(e) => setFilterComplexity(e.target.value)}
               className="block w-full rounded-lg bg-gray-900 border border-gray-700 text-white py-2 px-3 focus:ring-1 focus:ring-blue-500 focus:border-transparent text-sm"
             >
-              <option value="all">All Complexities</option>
-              <option value="Trivial">Trivial</option>
-              <option value="Simple">Simple</option>
-              <option value="Moderate">Moderate</option>
-              <option value="Complex">Complex</option>
-              <option value="Very Complex">Very Complex</option>
+              {Object.entries(config.ui.complexityFilterOptions).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
           </div>
         </div>

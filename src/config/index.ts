@@ -104,6 +104,19 @@ export const config: AppConfig = {
     defaultTheme: 'dark',
     resultsPerPage: 50,
     enableCostTracking: true,
+    tableSortOptions: {
+      complexity: 'Complexity',
+      estimated_cost: 'Cost',
+      confidence: 'Confidence'
+    },
+    complexityFilterOptions: {
+      all: 'All Complexities',
+      Trivial: 'Trivial',
+      Simple: 'Simple',
+      Moderate: 'Moderate',
+      Complex: 'Complex',
+      'Very Complex': 'Very Complex'
+    }
   },
   features: {
     enableCaching: true,
