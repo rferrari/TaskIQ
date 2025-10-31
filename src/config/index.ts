@@ -29,6 +29,8 @@ export interface AppConfig {
     defaultTheme: 'dark';
     resultsPerPage: number;
     enableCostTracking: boolean;
+    tableSortOptions: { [key: string]: string };
+    complexityFilterOptions: { [key:string]: string };
   };
   features: {
     enableCaching: boolean;
@@ -98,7 +100,7 @@ export const config: AppConfig = {
     
     // Performance tuning
     batchSize: 25,
-    requestDelay: 900, // ms between API calls
+    requestDelay: 2000, // ms between API calls
   },
   ui: {
     defaultTheme: 'dark',
