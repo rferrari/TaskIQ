@@ -33,7 +33,8 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
         '1 concurrent analysis slot',
         'Basic issue analysis',
         'Export to CSV',
-        'Real-time progress tracking'
+        'Real-time progress tracking',
+        'Max 100 issues per analysis',
       ],
       current: true
     },
@@ -42,11 +43,11 @@ export function RepositoryForm({ onAnalyze, isLoading }: RepositoryFormProps) {
       icon: '🚀',
       features: [
         'Multiple concurrent analyses',
-        'Priority processing',
         'Save analysis history',
         'Advanced analytics',
         'Team collaboration',
-        'API access'
+        'API access',
+        'Unlimited issues per analysis'
       ],
       current: false
     }
