@@ -52,6 +52,21 @@ function getModelConfigById(modelId: string): ModelConfig | null {
   return models.find(model => model.id === modelId) || null;
 }
 
+// async function withAbortSignal<T>(
+//   operation: (signal: AbortSignal) => Promise<T>,
+//   /** parentSignal is ignored – we never add listeners to it */
+//   _parentSignal?: AbortSignal
+// ): Promise<T> {
+//   const controller = new AbortController();
+
+//   try {
+//     return await operation(controller.signal);
+//   } finally {
+//     // always cancel any pending fetch / openai call
+//     controller.abort();
+//   }
+// }
+
 function parseAIResponse(raw: string): any {
   console.log(`🔄 Parsing AI response...`);
   
@@ -206,12 +221,13 @@ export function selectAnalysisStrategy(issue: GitHubIssue): {
   const regularModel = getModelConfig('regular');
   const largeModel = getModelConfig('large');
 
-  if (totalTokens < smallModel.maxContext * 0.6) {
+  if (totalTokens < largeModel.maxContext * 0.6) {
+    // Large issues need summarization
     return {
-      model: smallModel.id, // Return actual model ID
-      needsSummarization: false,
-      estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
-      modelConfig: smallModel
+      model: largeModel.id, // Return actual model ID
+      needsSummarization: true,
+      estimatedCost: estimateAnalysisCost(totalTokens, largeModel),
+      modelConfig: largeModel
     };
   }
 
@@ -224,73 +240,89 @@ export function selectAnalysisStrategy(issue: GitHubIssue): {
     };
   }
 
-  // Large issues need summarization
   return {
-    model: largeModel.id, // Return actual model ID
-    needsSummarization: true,
-    estimatedCost: estimateAnalysisCost(totalTokens, largeModel),
-    modelConfig: largeModel
-  };
+      model: smallModel.id, // Return actual model ID
+      needsSummarization: false,
+      estimatedCost: estimateAnalysisCost(totalTokens, smallModel),
+      modelConfig: smallModel
+    };
 }
 
 /** --- STAGE 1: SUMMARIZATION --- **/
-
-// Enhanced createIssueSummary function with built-in trimming
-export async function createIssueSummary(issue: GitHubIssue): Promise<string> {
+// ✅ Enhanced createIssueSummary function (fully fixed and refactored)
+export async function createIssueSummary(
+  issue: GitHubIssue,
+  // parentAbortSignal?: AbortSignal
+): Promise<string> {
   console.log(`📝 Stage 1: Creating summary for issue #${issue.number}`);
-  
-  const issueContent = `
+
+  // return withAbortSignal(async (signal) => {
+    const issueContent = `
 ISSUE #${issue.number}: ${issue.title}
-LABELS: ${issue.labels.map(l => l.name).join(', ') || 'None'}
+LABELS: ${issue.labels.map((l) => l.name).join(", ") || "None"}
 COMMENTS: ${issue.comments}
 STATE: ${issue.state}
 CREATED: ${issue.created_at}
-DESCRIPTION: ${issue.body || 'No description provided'}
-  `.trim();
+DESCRIPTION: ${issue.body || "No description provided"}
+`.trim();
 
-  const currentTokens = estimateTokens(issueContent);
-  const targetTokens = config.ai.summaryTargetTokens;
-  
-  if (currentTokens <= targetTokens) {
-    console.log(`✅ Issue #${issue.number} fits target (${currentTokens} tokens)`);
-    return issueContent;
-  }
+    const currentTokens = estimateTokens(issueContent);
+    const targetTokens = config.ai.summaryTargetTokens;
 
-  console.log(`🔄 Summarizing issue #${issue.number} from ${currentTokens} to ~${targetTokens} tokens`);
+    // Skip summarization if already short enough
+    if (currentTokens <= targetTokens) {
+      console.log(`✅ Issue #${issue.number} fits target (${currentTokens} tokens)`);
+      return issueContent;
+    }
 
-  const trimmedContent = smartTrimIssueContent(issueContent, targetTokens * 3);
-  const userPrompt = `Please create a concise technical summary of this GitHub issue for cost estimation analysis:\n\n${trimmedContent}`;
+    console.log(
+      `🔄 Summarizing issue #${issue.number} from ${currentTokens} → ~${targetTokens} tokens`
+    );
 
-  try {
-    const smallModel = getModelConfig('small');
-    
-    // Check TPM using model ID
-    const messages: OpenAIMessage[] = [
-      { role: "system", content: getSummarizationSystemPrompt() },
-      { role: "user", content: userPrompt }
-    ];
-    
-    const estimatedTokens = tpmLimiter.estimateRequestTokens(messages, smallModel);
-    await tpmLimiter.checkAndWait(smallModel.id, estimatedTokens);
+    const trimmedContent = smartTrimIssueContent(issueContent, targetTokens * 3);
+    const userPrompt = `Please create a concise technical summary of this GitHub issue for cost estimation analysis:\n\n${trimmedContent}`;
 
-    const completion = await openai.chat.completions.create({
-      model: smallModel.id,
-      messages,
-      temperature: 0.1,
-      max_tokens: targetTokens,
-    });
+    try {
+      const smallModel = getModelConfig("small");
 
-    const summary = completion.choices[0]?.message?.content?.trim();
-    if (!summary) throw new Error('No summary generated');
+      // Prepare messages for summarization
+      const messages: OpenAIMessage[] = [
+        { role: "system", content: getSummarizationSystemPrompt() },
+        { role: "user", content: userPrompt },
+      ];
 
-    const summaryTokens = estimateTokens(summary);
-    console.log(`✅ Summary created: ${summaryTokens} tokens`);
-    
-    return summary;
-  } catch (error) {
-    console.error(`❌ Summarization failed for issue #${issue.number}:`, error);
-    return trimmedContent;
-  }
+      // Check and respect TPM limit
+      const estimatedTokens = tpmLimiter.estimateRequestTokens(messages, smallModel);
+      await tpmLimiter.checkAndWait(smallModel.id, estimatedTokens);
+
+      // Run OpenAI completion
+      const completion = await openai.chat.completions.create(
+        {
+          model: smallModel.id,
+          messages,
+          temperature: 0.1,
+          max_tokens: targetTokens,
+        },
+        // { signal }
+      );
+
+      const summary = completion.choices[0]?.message?.content?.trim();
+      if (!summary) throw new Error("No summary generated");
+
+      const summaryTokens = estimateTokens(summary);
+      console.log(`✅ Summary created: ${summaryTokens} tokens`);
+
+      return summary;
+    } catch (error: any) {
+      // if (error.name === "AbortError" || parentAbortSignal?.aborted) {
+      //   console.log(`🛑 Summarization for issue #${issue.number} was aborted`);
+      //   throw error;
+      // }
+
+      console.error(`❌ Summarization failed for issue #${issue.number}:`, error);
+      return trimmedContent;
+    }
+  // }, parentAbortSignal);
 }
 
 // Smart trimming function that combines noise removal and key extraction
@@ -382,13 +414,23 @@ export async function analyzeWithModel(
   model: string, 
   issue: GitHubIssue, 
   summary: string,
-  abortSignal?: AbortSignal
+  // parentAbortSignal?: AbortSignal
 ): Promise<AIModelResponse> {
+  // return withAbortSignal(async (signal) => {
+    console.log(`🔍 Starting analysis for issue #${issue.number} using ${model}`);
   
-  // Check for abort signal
-  if (abortSignal?.aborted) {
-    throw new DOMException('Analysis was aborted', 'AbortError');
-  }
+  // Create dedicated abort controller for this request
+  const requestAbortController = new AbortController();
+  
+  // // Set up parent signal forwarding with proper cleanup
+  // if (parentAbortSignal) {
+  //   const handleParentAbort = () => {
+  //     requestAbortController.abort();
+  //     // Remove the listener to prevent leaks
+  //     parentAbortSignal.removeEventListener('abort', handleParentAbort);
+  //   };
+  //   parentAbortSignal.addEventListener('abort', handleParentAbort);
+  // }
 
   const modelConfig = getModelConfigById(model) || getModelConfig('small');
   
@@ -399,14 +441,14 @@ export async function analyzeWithModel(
       role: "system",
       content: getAnalysisSystemPrompt()
     },
-    { 
+    {
       role: "user", 
       content: userPrompt 
     }
   ];
 
   try {
-    // Check TPM limits using model ID
+    // Check TPM limits
     const estimatedTokens = tpmLimiter.estimateRequestTokens(messages, modelConfig);
     await tpmLimiter.checkAndWait(model, estimatedTokens);
 
@@ -414,19 +456,17 @@ export async function analyzeWithModel(
 
     const startTime = Date.now();
     
-    // Pass abort signal to OpenAI request
     const completion = await openai.chat.completions.create({
       model,
       messages,
       temperature: 0.1,
       max_tokens: config.ai.analysisMaxTokens,
-      response_format: { type: "json_object" }
-    }, {
-      signal: abortSignal // This allows the request to be cancelled
-    });
+          response_format: { type: "json_object" },
+        },
+        // { signal }
+      );
     
     const endTime = Date.now();
-
     console.log(`⏱️ Analysis with ${model} took: ${endTime - startTime}ms`);
 
     const response = completion.choices[0]?.message?.content;
@@ -434,11 +474,13 @@ export async function analyzeWithModel(
 
     return validateAIResponse(JSON.parse(response));
   } catch (error: any) {
-    // Check if this was an abort error
-    if (error.name === 'AbortError' || abortSignal?.aborted) {
-      console.log(`🛑 Analysis with ${model} was aborted`);
-      throw error;
-    }
+    // Clean up the abort controller
+    requestAbortController.abort();
+    
+    // if (error.name === 'AbortError' || parentAbortSignal?.aborted) {
+    //   console.log(`🛑 Analysis with ${model} was aborted`);
+    //   throw error;
+    // }
     
     console.error(`❌ Analysis failed with ${model}:`, error.message);
     
@@ -474,13 +516,15 @@ export async function analyzeWithModel(
     
     throw error;
   }
+  // }, parentAbortSignal);
 }
 
 
 /** --- MAIN PIPELINE --- **/
 
 export async function analyzeIssueWithAI(
-  issue: GitHubIssue
+  issue: GitHubIssue,
+  // abortSignal?: AbortSignal
 ): Promise<AIModelResponse> {
   
   console.log(`\n🎯 STARTING ANALYSIS PIPELINE for issue #${issue.number}`);

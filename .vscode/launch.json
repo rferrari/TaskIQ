@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Next.js: Debug (Webpack)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--webpack"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "sourceMaps": true,
+      "smartStep": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      "outFiles": ["${workspaceFolder}/.next/**/*.js"]
+    }
+  ]
+}

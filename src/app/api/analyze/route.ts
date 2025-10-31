@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 export const preferredRegion = 'auto';
 
+// import { addAbortListener } from 'node:events';
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
 import { AnalysisResult, AnalysisProgressType } from '@/types';
@@ -155,18 +156,18 @@ export async function POST(request: NextRequest) {
     }).then(async () => {
       console.log(`✅ Analysis ${analysisId} completed successfully`);
       await safeWriterClose(writer);
-      activeAnalyses.delete(analysisId!);
+      activeAnalyses.delete(analysisId!); // Use non-null assertion operator
     }).catch(async (error) => {
       console.error(`❌ Analysis ${analysisId} failed:`, error);
       await safeWriterClose(writer);
-      activeAnalyses.delete(analysisId!);
+      activeAnalyses.delete(analysisId!); // Use non-null assertion operator
     });
 
     // Handle client disconnection
     const handleAbort = () => {
       console.log(`🛑 Client disconnected, cancelling analysis: ${analysisId}`);
       abortController.abort();
-      activeAnalyses.delete(analysisId!);
+      activeAnalyses.delete(analysisId!); // Use non-null assertion operator
       // Note: We don't close writer here as the stream is already closed by the client disconnect
     };
 
@@ -361,15 +362,17 @@ async function analyzeWithTransparentBatching(
       }
 
       try {
-        const analyzedIssue = await analyzeSingleIssueWithProgress(
-          issue, 
-          progress, 
-          writer, 
-          encoder, 
-          shouldUseMock,
-          globalIndex,
-          abortSignal
-        );
+        const analyzedIssue = await (async () => {
+          return await analyzeSingleIssueWithProgress(
+            issue, 
+            progress, 
+            writer, 
+            encoder, 
+            shouldUseMock,
+            globalIndex,
+            // abortSignal
+          );
+        })();
         
         if (analyzedIssue) {
           analyzedIssues.push(analyzedIssue);
@@ -491,13 +494,23 @@ async function analyzeSingleIssueWithProgress(
   encoder: any,
   shouldUseMock: boolean,
   globalIndex: number,
-  abortSignal?: AbortSignal
+  // parentAbortSignal?: AbortSignal
 ): Promise<any> {
   
-  // Check for abort signal
-  if (abortSignal?.aborted) {
-    throw new Error('Analysis was aborted');
-  }
+  // const childController = new AbortController();
+  // const childSignal = childController.signal;
+  // // let disposable: (() => void) | null = null;
+  // if (parentAbortSignal) {
+  //   if (parentAbortSignal.aborted) {
+  //     childController.abort();
+  //   } else {
+  //     // Use Node's addAbortListener – no maxListeners warning!
+  //     addAbortListener(parentAbortSignal, () => {
+  //       childController.abort();
+  //     });
+  //   }
+  // }
+  // if (childSignal.aborted) throw new Error('Analysis was aborted');
   
   // Update issue status to summarizing
   progress.issues[issue.number].status = 'summarizing';
@@ -514,9 +527,9 @@ async function analyzeSingleIssueWithProgress(
     await sendProgress(writer, encoder, progress);
 
     // Check for abort during mock processing
-    if (abortSignal?.aborted) {
-      throw new Error('Analysis was aborted');
-    }
+    // if (childSignal?.aborted) {
+    //   throw new Error('Analysis was aborted');
+    // }
 
     // Simulate processing time
     await new Promise(resolve => setTimeout(resolve, 800));
@@ -534,9 +547,9 @@ async function analyzeSingleIssueWithProgress(
       await sendProgress(writer, encoder, progress);
 
       // Check for abort during summarization
-      if (abortSignal?.aborted) {
-        throw new Error('Analysis was aborted');
-      }
+      // if (childSignal?.aborted) {
+      //   throw new Error('Analysis was aborted');
+      // }
 
       analysisContent = await createIssueSummary(issue);
       progress.issues[issue.number].summaryTokens = estimateTokens(analysisContent);
@@ -548,9 +561,9 @@ async function analyzeSingleIssueWithProgress(
     await sendProgress(writer, encoder, progress);
 
     // Check for abort before analysis
-    if (abortSignal?.aborted) {
-      throw new Error('Analysis was aborted');
-    }
+    // if (childSignal?.aborted) {
+    //   throw new Error('Analysis was aborted');
+    // }
 
     // Stage 2: Analysis
     progress.issues[issue.number].status = 'analyzing';
@@ -558,7 +571,7 @@ async function analyzeSingleIssueWithProgress(
     progress.issues[issue.number].progress = 75;
     await sendProgress(writer, encoder, progress);
 
-    analysis = await analyzeWithModel(strategy.model, issue, analysisContent, abortSignal);
+    analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
   }
   
   // Mark as complete

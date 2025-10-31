@@ -55,22 +55,22 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   regular: {
     id: 'openai/gpt-oss-20b',
     type: 'regular',
-    maxContext: 6000,
+    maxContext: 500,
     maxCompletion: 4096,
     priceInput: 0.075,
     priceOutput: 0.30,
-    tpm: 6000,
+    tpm: 8000,
     speed: '1000 T/SEC',
     description: 'Balanced - good for medium complexity issues'
   },
   large: {
     id: 'llama-3.3-70b-versatile',
     type: 'large',
-    maxContext: 6000,
+    maxContext: 200,
     maxCompletion: 4096,
     priceInput: 0.59,
     priceOutput: 0.79,
-    tpm: 6000,
+    tpm: 12000,
     speed: '280 T/SEC',
     description: 'Powerful - best for complex issues requiring deep analysis'
   }

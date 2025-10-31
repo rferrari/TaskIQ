@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 export const preferredRegion = 'auto';
 
+import { addAbortListener } from 'node:events'; 
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
 import { analyzeIssueWithAI, analyzeWithModel, 
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Analyze this specific batch
-    const analyzedBatchIssues = await analyzeBatchIssues(batchIssues, shouldUseMock);
+    const analyzedBatchIssues = await analyzeBatchIssues(batchIssues, shouldUseMock, request.signal);
 
     // Calculate batch-specific summary
     const batchSummary = calculateSummary(analyzedBatchIssues);
@@ -76,12 +77,31 @@ export async function POST(request: NextRequest) {
 }
 
 // Batch analysis function (optimized for batch processing)
-async function analyzeBatchIssues(issues: any[], shouldUseMock: boolean): Promise<any[]> {
+async function analyzeBatchIssues(
+  issues: any[],
+  shouldUseMock: boolean,
+  parentAbortSignal: AbortSignal
+): Promise<any[]> {
   const analyzedIssues: any[] = [];
   
   for (let i = 0; i < issues.length; i++) {
     const issue = issues[i];
     
+    const child = new AbortController();
+    const childSignal = child.signal;
+
+    // forward parent abort (once)
+    if (parentAbortSignal) {
+      if (parentAbortSignal.aborted) {
+        child.abort();
+      } else {
+        // Use Node's addAbortListener – no maxListeners warning!
+        addAbortListener(parentAbortSignal, () => {
+          child.abort();
+        });
+      }
+    }
+
     try {
       let analysis;
       
