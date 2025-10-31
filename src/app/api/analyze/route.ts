@@ -9,7 +9,10 @@ import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
 import { AnalysisResult, AnalysisProgressType } from '@/types';
 import { analyzeWithModel, createIssueSummary, getFallbackAnalysis, mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
 import { calculateSummary } from '@/lib/summary-utils';
-import { config } from '@/config';}
+import { config } from '@/config';
+
+// Simple in-memory store for active analyses
+const activeAnalyses = new Map<string, { abortController: AbortController }>();
 
 // Helper function for token estimation
 function estimateTokens(text: string): number {
