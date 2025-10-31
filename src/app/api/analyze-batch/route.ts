@@ -7,9 +7,9 @@ export const preferredRegion = 'auto';
 import { addAbortListener } from 'node:events'; 
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
-import { analyzeIssueWithAI, analyzeWithModel, 
-  createIssueSummary, getFallbackAnalysis, 
-  mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
+import { analyzeIssueWithAI, 
+  // analyzeWithModel, createIssueSummary, selectAnalysisStrategy,
+  getFallbackAnalysis, mockAnalyzeIssue } from '@/lib/ai-service';
 
 import { calculateSummary } from '@/lib/summary-utils';
 
@@ -112,18 +112,23 @@ async function analyzeBatchIssues(
         await new Promise(resolve => setTimeout(resolve, 500));
       } else {
         // Real AI analysis with multi-stage pipeline
-        const strategy = selectAnalysisStrategy(issue);
-        let analysisContent = '';
+        // const strategy = selectAnalysisStrategy(issue);
+        // let analysisContent = '';
 
-        // Stage 1: Summarization (if needed)
-        if (strategy.needsSummarization) {
-          analysisContent = await createIssueSummary(issue);
-        } else {
-          analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
-        }
+        // // Stage 1: Summarization (if needed)
+        // if (strategy.needsSummarization) {
+        //   analysisContent = await createIssueSummary(issue);
+        // } else {
+        //   analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
+        // }
 
         // Stage 2: Analysis
-        analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+        analysis = await analyzeIssueWithAI(issue);
+        // analysis = await analyzeIssueWithAI(
+        //   issue,
+        //   progress,
+        //   async (p) => await sendProgress(writer, encoder, p)
+        // );
       }
       
       // Store result

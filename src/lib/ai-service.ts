@@ -1,5 +1,5 @@
 import { OpenAI } from 'openai';
-import { GitHubIssue } from '@/types';
+import { AnalysisProgressType, GitHubIssue } from '@/types';
 import { tpmLimiter } from '@/lib/rate-limiter';
 
 // Use proper OpenAI message types
@@ -16,6 +16,7 @@ import {
   getAnalysisSystemPrompt, 
   ModelConfig
 } from '@/config';
+import { tokenBalancer } from './advanced-balancer';
 
 interface AIModelResponse {
   complexity: number;
@@ -204,14 +205,14 @@ export function selectAnalysisStrategy(issue: GitHubIssue): {
   
   console.log(`📊 Issue #${issue.number} token estimate: ${totalTokens}`);
 
-  // Enforce 30K token limit
-  if (totalTokens > 30000) {
-    console.log(`⚠️ Issue #${issue.number} exceeds 30K token limit, forcing summarization`);
+  // Enforce token limit
+  if (totalTokens > config.ai.maxIssueTokens) {
+    console.log(`⚠️ Issue #${issue.number} exceeds ${config.ai.maxIssueTokens} token limit, forcing summarization`);
     const smallModel = getModelConfig('small');
     return {
       model: smallModel.id, // Return actual model ID
       needsSummarization: true,
-      estimatedCost: estimateAnalysisCost(30000, smallModel),
+      estimatedCost: estimateAnalysisCost(config.ai.maxIssueTokens, smallModel),
       modelConfig: smallModel
     };
   }
@@ -474,47 +475,35 @@ export async function analyzeWithModel(
 
     return validateAIResponse(JSON.parse(response));
   } catch (error: any) {
-    // Clean up the abort controller
     requestAbortController.abort();
-    
-    // if (error.name === 'AbortError' || parentAbortSignal?.aborted) {
-    //   console.log(`🛑 Analysis with ${model} was aborted`);
-    //   throw error;
-    // }
-    
-    console.error(`❌ Analysis failed with ${model}:`, error.message);
-    
-    // If it's a TPM error, wait and retry once
-    if (error.status === 429 || error.message.includes('TPM') || error.message.includes('rate limit')) {
-      console.log(`🔄 TPM limit hit, waiting 65 seconds and retrying...`);
-      await new Promise(resolve => setTimeout(resolve, 65000));
-      
-      // Reset the limiter for this model since we're waiting
-      tpmLimiter.reset(model);
-      
-      console.log(`🔄 Retrying analysis with ${model} after TPM wait...`);
-      return await analyzeWithModel(model, issue, summary);
-    }
-    
-    // If it's a size-related error, try with a smaller model using config
-    if (error.status === 413 || error.message.includes('too large') || error.message.includes('token')) {
-      console.log(`🔄 Size limit hit with ${model}, trying smaller model...`);
-      
-      const currentModelConfig = getModelConfigById(model);
-      if (currentModelConfig) {
-        if (currentModelConfig.type === 'large') {
-          const fallbackModel = getModelConfig('regular').id;
-          console.log(`🔄 Falling back from large to regular: ${fallbackModel}`);
-          return await analyzeWithModel(fallbackModel, issue, summary);
-        } else if (currentModelConfig.type === 'regular') {
-          const fallbackModel = getModelConfig('small').id;
-          console.log(`🔄 Falling back from regular to small: ${fallbackModel}`);
-          return await analyzeWithModel(fallbackModel, issue, summary);
-        }
+
+  console.error(`Analysis failed with ${model}:`, error.message);
+
+  // 1. TPM / Rate limit → treat as "try next model"
+  if (error.status === 429 || error.message.includes('TPM') || error.message.includes('rate limit')) {
+    console.log(`Rate limit hit for ${model}, trying next model...`);
+    throw error; // ← Let analyzeIssueWithAI try fallback
+  }
+
+  // 2. Size error → try smaller model (existing logic)
+  if (error.status === 413 || error.message.includes('too large') || error.message.includes('token')) {
+    console.log(`Size limit hit with ${model}, trying smaller model...`);
+    const currentModelConfig = getModelConfigById(model);
+    if (currentModelConfig) {
+      if (currentModelConfig.type === 'large') {
+        const fallback = getModelConfig('regular').id;
+        console.log(`Falling back from large to regular: ${fallback}`);
+        return await analyzeWithModel(fallback, issue, summary);
+      } else if (currentModelConfig.type === 'regular') {
+        const fallback = getModelConfig('small').id;
+        console.log(`Falling back from regular to small: ${fallback}`);
+        return await analyzeWithModel(fallback, issue, summary);
       }
     }
-    
-    throw error;
+  }
+
+  // 3. Other errors → rethrow
+  throw error;
   }
   // }, parentAbortSignal);
 }
@@ -522,48 +511,90 @@ export async function analyzeWithModel(
 
 /** --- MAIN PIPELINE --- **/
 
+// Updated analyzeIssueWithAI function
 export async function analyzeIssueWithAI(
   issue: GitHubIssue,
-  // abortSignal?: AbortSignal
+  progress?: AnalysisProgressType,
+  sendProgress?: (p: AnalysisProgressType) => Promise<void>
 ): Promise<AIModelResponse> {
   
-  console.log(`\n🎯 STARTING ANALYSIS PIPELINE for issue #${issue.number}`);
-  console.log(`📊 Issue: "${issue.title}"`);
-  console.log(`🏷️ Labels: ${issue.labels.map(l => l.name).join(', ')}`);
-  console.log(`💬 Comments: ${issue.comments}`);
-  console.log(`📝 Body length: ${issue.body?.length || 0} chars`);
-    
-  // Stage 0: Strategy Selection
-  const strategy = selectAnalysisStrategy(issue);
-  console.log(`⚡ Selected strategy:`, {
-    model: strategy.model,
-    needsSummarization: strategy.needsSummarization,
-    estimatedCost: `$${strategy.estimatedCost.toFixed(6)}`,
-    reason: strategy.needsSummarization ? 'Large issue requiring summarization' : 'Fits directly in selected model'
-  });
+  console.log(`\nSTARTING BALANCED ANALYSIS PIPELINE for issue #${issue.number}`);
+  
+  const strategy = tokenBalancer.selectBalancedStrategy(issue);
+
+  // UPDATE UI: Show selected model
+  if (progress && sendProgress) {
+    progress.issues[issue.number].currentStage = strategy.model;
+    progress.issues[issue.number].status = 'analyzing';
+    progress.issues[issue.number].progress = 75;
+    await sendProgress(progress);
+  }
+
+  const startTime = Date.now();
+  let finalModelUsed = strategy.model;
 
   try {
-    // Stage 1: Summarization (if needed)
     const analysisContent = strategy.needsSummarization 
       ? await createIssueSummary(issue)
-      : `
-ISSUE #${issue.number}: ${issue.title}
-LABELS: ${issue.labels.map(l => l.name).join(', ') || 'None'} 
-COMMENTS: ${issue.comments}
-DESCRIPTION: ${issue.body || 'No description provided'}
-      `.trim();
+      : `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
 
-    // Stage 2: Analysis with selected model
-    console.log(`🔍 Beginning analysis with ${strategy.model}...`);
-    const analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+    let analysis: AIModelResponse;
+    let lastError: Error | null = null;
+    
+    const modelsToTry = [strategy.model, ...strategy.fallbackModels];
+    
+    for (const model of modelsToTry) {
+      try {
+        // UPDATE UI: Show current model being tried
+        if (progress && sendProgress) {
+          progress.issues[issue.number].currentStage = model;
+          await sendProgress(progress);
+        }
 
-    console.log(`🎉 ANALYSIS COMPLETE for issue #${issue.number}`);
-    console.log(`📈 Result: Complexity ${analysis.complexity}, Cost: ${analysis.estimated_cost}, Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
+        analysis = await analyzeWithModel(model, issue, analysisContent);
+        finalModelUsed = model;
+        break;
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`Analysis failed with ${model}, trying next...`);
+        tokenBalancer.recordModelPerformance(model, Date.now() - startTime, false);
+        
+        if (model === modelsToTry[modelsToTry.length - 1]) {
+          throw lastError;
+        }
+      }
+    }
 
-    return analysis;
+    const responseTime = Date.now() - startTime;
+    tokenBalancer.recordModelPerformance(finalModelUsed, responseTime, true);
+
+    // FINAL UI UPDATE
+    if (progress && sendProgress) {
+      progress.issues[issue.number].model = finalModelUsed;
+      progress.issues[issue.number].status = 'complete';
+      progress.issues[issue.number].progress = 100;
+      progress.analyzedIssues++;
+      await sendProgress(progress);
+    }
+
+    return analysis!;
     
   } catch (error) {
-    console.error(`🔴 PIPELINE FAILED for issue #${issue.number}, using fallback`);
-    return getFallbackAnalysis(issue);
+// FAILURE → FALLBACK
+    tokenBalancer.recordModelPerformance(finalModelUsed, Date.now() - startTime, false);
+    console.error(`BALANCED PIPELINE FAILED for issue #${issue.number}, using fallback`);
+
+    const fallback = getFallbackAnalysis(issue);
+
+    // UI: Show fallback model
+    if (progress && sendProgress) {
+      progress.issues[issue.number].model = 'fallback';
+      progress.issues[issue.number].status = 'complete';
+      progress.issues[issue.number].progress = 100;
+      progress.analyzedIssues++;
+      await sendProgress(progress);
+    }
+
+    return fallback;
   }
 }

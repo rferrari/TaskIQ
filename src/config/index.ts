@@ -94,9 +94,9 @@ export const config: AppConfig = {
     },
     
     // Token management
-    summaryTargetTokens: 1500,
-    analysisMaxTokens: 2000,
-    maxIssueTokens: 25000,
+    summaryTargetTokens: 2000,
+    analysisMaxTokens: 5000,
+    maxIssueTokens: 10000,
     
     // Performance tuning
     batchSize: 25,

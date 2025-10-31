@@ -8,7 +8,9 @@ export const preferredRegion = 'auto';
 import { NextRequest, NextResponse } from 'next/server';
 import { extractRepoInfo, fetchGitHubIssues } from '@/lib/github';
 import { AnalysisResult, AnalysisProgressType } from '@/types';
-import { analyzeWithModel, createIssueSummary, getFallbackAnalysis, mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
+import { analyzeIssueWithAI, 
+  // analyzeWithModel, createIssueSummary, 
+  getFallbackAnalysis, mockAnalyzeIssue, selectAnalysisStrategy } from '@/lib/ai-service';
 import { calculateSummary } from '@/lib/summary-utils';
 import { config } from '@/config';
 
@@ -538,26 +540,26 @@ async function analyzeSingleIssueWithProgress(
     
   } else {
     // Real AI analysis with progress updates
-    const strategy = selectAnalysisStrategy(issue);
-    let analysisContent = '';
+    // const strategy = selectAnalysisStrategy(issue);
+    // let analysisContent = '';
 
-    // Stage 1: Summarization
-    if (strategy.needsSummarization) {
-      progress.issues[issue.number].currentStage = 'Creating summary';
-      await sendProgress(writer, encoder, progress);
+    // // Stage 1: Summarization
+    // if (strategy.needsSummarization) {
+    //   progress.issues[issue.number].currentStage = 'Creating summary';
+    //   await sendProgress(writer, encoder, progress);
 
-      // Check for abort during summarization
-      // if (childSignal?.aborted) {
-      //   throw new Error('Analysis was aborted');
-      // }
+    //   // Check for abort during summarization
+    //   // if (childSignal?.aborted) {
+    //   //   throw new Error('Analysis was aborted');
+    //   // }
 
-      analysisContent = await createIssueSummary(issue);
-      progress.issues[issue.number].summaryTokens = estimateTokens(analysisContent);
-      progress.issues[issue.number].progress = 50;
-    } else {
-      analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
-      progress.issues[issue.number].progress = 50;
-    }
+    //   analysisContent = await createIssueSummary(issue);
+    //   progress.issues[issue.number].summaryTokens = estimateTokens(analysisContent);
+    //   progress.issues[issue.number].progress = 50;
+    // } else {
+    //   analysisContent = `ISSUE #${issue.number}: ${issue.title}\nDESCRIPTION: ${issue.body || 'No description'}`;
+    //   progress.issues[issue.number].progress = 50;
+    // }
     await sendProgress(writer, encoder, progress);
 
     // Check for abort before analysis
@@ -567,11 +569,17 @@ async function analyzeSingleIssueWithProgress(
 
     // Stage 2: Analysis
     progress.issues[issue.number].status = 'analyzing';
-    progress.issues[issue.number].currentStage = strategy.model;
+    // progress.issues[issue.number].currentStage = strategy.model;
     progress.issues[issue.number].progress = 75;
     await sendProgress(writer, encoder, progress);
 
-    analysis = await analyzeWithModel(strategy.model, issue, analysisContent);
+    analysis = await analyzeIssueWithAI(
+      issue,
+      progress,
+      async (p) => await sendProgress(writer, encoder, p)
+    );
+
+    // analysis = await analyzeIssueWithAI(issue);
   }
   
   // Mark as complete
