@@ -175,8 +175,8 @@ export function validateEnvironment(): { isValid: boolean; warnings: string[] } 
   // Validate model configurations
   const models = [config.ai.smallModel, config.ai.regularModel, config.ai.largeModel];
   for (const model of models) {
-    if (model.maxCompletion > model.maxContext) {
-      warnings.push(`Model ${model.id}: maxCompletion (${model.maxCompletion}) exceeds maxContext (${model.maxContext})`);
+    if (model.maxContext > model.maxCompletion) {
+      warnings.push(`Model ${model.id}: maxContext (${model.maxContext}) exceeds maxCompletion (${model.maxCompletion})`);
     }
   }
   
